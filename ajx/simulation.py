@@ -1,7 +1,6 @@
 import jax.numpy as jnp
 import numpy as np
 import jax
-from jax import eval_shape
 import ajx.math as math
 
 from ajx.rigid_body import (
@@ -56,8 +55,6 @@ class Simulation:
         state, parameters and control signal.
     step:
         Update the state using the given velocity update.
-    project_to_constraint_normals:
-        Project a vector to the constraint normals at the configuration given by state.
     inverse_dynamics:
         Solve for the forces to step from one state to a target state.
     """
@@ -65,16 +62,12 @@ class Simulation:
     timestep: float
     rigid_body_list: Tuple[RigidBody]
     constraint_list: Tuple[Constraint]
-    pre_step_modifiers: Tuple
+    pre_step_modifiers: Tuple[PreStepModifier]
     use_gyroscopic: bool
 
     @property
     def h_inv(self):
         return 1 / self.timestep
-
-    @property
-    def implicit_inverse_dynamics_directions(self):
-        return ["normal", "tangential"]
 
     @partial(jit, static_argnums=0)
     def force(
@@ -104,7 +97,7 @@ class Simulation:
         """
         for component in self.pre_step_modifiers:
             param = param.insert(component.update_params(state, u, param))
-        f_ext = self.gravity_gyro_force3D(state, param)
+        f_ext = self._gravity_gyro_force3D(state, param)
 
         return self.force_solver(state, f_ext, param)
 
@@ -125,7 +118,6 @@ class Simulation:
         State:
             The updated state.
         """
-        # gvel_next = GeneralizedVelocity(jnp.stack(tuple(qdot_next.data.values())))
 
         def body_step(gvel_next, conf):
             vel_next = gvel_next.data[:3]
@@ -169,8 +161,8 @@ class Simulation:
         for component in self.pre_step_modifiers:
             param = param.insert(component.update_params(state, u, param))
 
-        f_ext = self.gravity_gyro_force3D(state, param)
-        M_stacked, _, G, Sigma_data, b_data, _ = self.assemble_blocks(state, param)
+        f_ext = self._gravity_gyro_force3D(state, param)
+        M_stacked, _, G, Sigma_data, b_data, _ = self._assemble_blocks(state, param)
         G_dense = G.to_scalar_matrix()
         # M = jax.scipy.linalg.block_diag(*M_stacked)
 
@@ -198,7 +190,7 @@ class Simulation:
             param = param.insert(modifier.update_params(state, u, param))
 
         qdot_delta = qdot_target.data - state.gvel.data
-        M_stacked, _, G, Sigma_data, _, _ = self.assemble_blocks(state, param)
+        M_stacked, _, G, Sigma_data, _, _ = self._assemble_blocks(state, param)
         G_dense = G.to_scalar_matrix()
         M_vdelta = jax.vmap(jnp.matmul)(M_stacked, qdot_delta).flatten()
 
@@ -207,25 +199,8 @@ class Simulation:
 
         return p_ext
 
-    def effective_mass(
-        self,
-        state: State,
-        u: jax.Array,
-        param: Dict,
-    ):
-        for component in self.pre_step_modifiers:
-            param = param.insert(component.update_params(state, u, param))
-
-        M_stacked, M_inv_stacked, G, Sigma_data, b_data, _ = self.assemble_blocks(
-            state, param
-        )
-        G_dense = G.to_scalar_matrix()
-        M = jax.scipy.linalg.block_diag(*M_stacked)
-        M_Sigma = M + G_dense.T @ jnp.diag(1 / Sigma_data) @ G_dense
-        return M_Sigma
-
     @partial(jit, static_argnums=0)
-    def gravity_gyro_force3D(self, state, param):
+    def _gravity_gyro_force3D(self, state, param):
         g = param.gravity
 
         def force_per_body(rb_param, state):
@@ -274,12 +249,12 @@ class Simulation:
         logger.trace("Tracing force_solver")
         gvel = state.gvel.data.flatten()
 
-        M_stacked, M_inv_stacked, G, Sigma_data, b_data, _ = self.assemble_blocks(
+        M_stacked, M_inv_stacked, G, Sigma_data, b_data, _ = self._assemble_blocks(
             state, param
         )
 
         if do_sparse:
-            S_sparse, rhs, M_inv_f, rsi_dict = self.assemble_schur(
+            S_sparse, rhs, M_inv_f, rsi_dict = self._assemble_schur(
                 G,
                 M_inv_stacked.flatten(),
                 Sigma_data,
@@ -328,14 +303,14 @@ class Simulation:
         return M_stack, M_inv_stack
 
     @partial(jit, static_argnums=0)
-    def assemble_blocks(
+    def _assemble_blocks(
         self,
         state: State,
         param: Dict,
         impulse: bool = False,
     ) -> Tuple[State, jnp.array, int]:
         """
-        Assemble the blocks in
+        Assemble the blocks in the saddle point system
 
         | M   -G.T  ||  v   |   | a |
         |           ||      |   |   |
@@ -488,7 +463,7 @@ class Simulation:
         # pass
         return M, M_inv, G, Sigma_data, b_data, 0
 
-    def assemble_schur(
+    def _assemble_schur(
         self,
         G,
         M_inv,
@@ -497,7 +472,6 @@ class Simulation:
         gvel,
         b_data,
         lower=True,
-        inverse_dynamics=False,
     ):
         (
             schur_size,
@@ -534,7 +508,7 @@ class Simulation:
                 )
                 if (i, j) in rsi_dict:
                     data2 = G.data[slice_begin2:slice_end2]
-                    res, intersection_empty = bdot_over_intersection(
+                    res, intersection_empty = _bdot_over_intersection(
                         cols1,
                         data1,
                         cols2,
@@ -583,7 +557,7 @@ class Simulation:
 import numpy as np
 
 
-def bdot_over_intersection(
+def _bdot_over_intersection(
     a_indices,
     a_values,
     b_indices,
