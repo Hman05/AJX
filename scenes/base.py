@@ -37,22 +37,28 @@ from loguru import logger
 
 class GraphicalEnvironmentBase(DirectObject):
     def __init__(
-        self, environment, initial_state, trajectory_path=None, synchronized_start_k=0
+        self,
+        env,
+        env_param,
+        initial_state,
+        trajectory_path=None,
+        synchronized_start_k=0,
     ):
-        self.timestep = environment.timestep
-        self.environment = environment
+        self.timestep = env.timestep
+        self.environment = env
+        self.env_param = env_param
         self.initial_state = initial_state
         self.game = Game(framerate=1 / self.timestep)
 
-        self.force = self.environment.force
-        self.step = jit(self.environment.step)
-        self.observe = jit(self.environment.observe)
+        self.force = env.force
+        self.step = jit(env.step)
+        self.observe = jit(env.observe)
 
         self.physics_is_active = True
         self.replay_active = False
 
         self.state = copy.deepcopy(self.initial_state)
-        self.observation = jnp.zeros([len(self.environment.observable_names)])
+        self.observation = jnp.zeros([len(env.observable_names)])
 
         self.create_graphics(initial_state)
         self.create_events()
@@ -74,7 +80,7 @@ class GraphicalEnvironmentBase(DirectObject):
             if type(raw_data).__name__ == "TrajectoryDataset":
                 self.state_sequence = raw_data.initial_states
             else:
-                self.state_sequence = environment.xarray_to_trajectory(
+                self.state_sequence = env.xarray_to_trajectory(
                     raw_data["trajectory"].states
                 )
 
@@ -377,7 +383,7 @@ class GraphicalEnvironmentBase(DirectObject):
             self.update_physics()
         elif self.replay_active:
             self.update_trajectory()
-            self.observation = self.observe(self.state, None, self.environment.param)
+            self.observation = self.observe(self.state, None, self.env_param)
 
         info_list = self.environment.get_display_text(self.observation)
         if len(info_list) > 0:
@@ -408,11 +414,9 @@ class GraphicalEnvironmentBase(DirectObject):
         )
 
     def update_physics(self):
-        qdot_next, ghosts, status = self.force(
-            self.state, -self.u, self.environment.param
-        )
+        qdot_next, ghosts, status = self.force(self.state, -self.u, self.env_param)
         self.last_observation = self.observation
-        self.observation = self.observe(self.state, qdot_next, self.environment.param)
+        self.observation = self.observe(self.state, qdot_next, self.env_param)
         self.state = self.step(self.state, qdot_next)
 
         assert status == 0

@@ -38,7 +38,7 @@ class TargetSpeedMotor2(PreStepModifier):
     def update_params(self, state, u, param):
         lock = u[self.idx] == 0.0
         not_lock = jnp.logical_not(lock)
-        default_target = param.get_cp(self.constraint.name).target5
+        default_target = param.get_cp(self.constraint.name).target[5]
         target = default_target * lock + u[self.idx] * not_lock
         return {
             "constraint_param": {

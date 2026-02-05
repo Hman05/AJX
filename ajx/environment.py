@@ -59,11 +59,11 @@ class Environment(ABC):
         self.observable_names = observable_names
         self.residual_names = residual_names
 
-        ghost_names = []
-        for i, constraint in enumerate(self.constraints):
-            names = get_ghost_names(constraint, self.param, i)
-            ghost_names.extend(names)
-        self.ghost_names = ghost_names
+        # ghost_names = []
+        # for i, constraint in enumerate(self.constraints):
+        #     names = get_ghost_names(constraint, self.param, i)
+        #     ghost_names.extend(names)
+        # self.ghost_names = ghost_names
 
         self.batched_force = jit(vmap(self.force, (0, 0, None)))
         self.batched_branched_force = jit(

@@ -8,12 +8,10 @@ from ajx import *
 if __name__ == "__main__":
     timestep = 0.016667
 
-    environment = CartPole(
-        override_param={},
-        timestep=timestep,
-    )
+    env = CartPole(timestep)
+    env_param = env.default_param.insert(src={})
 
-    initial_state = environment.state_from_angles(5.0, 3.0, environment.param)
+    initial_state = env.state_from_angles(5.0, 3.0, env_param)
 
-    controller = GraphicalEnvironmentBase(environment, initial_state)
+    controller = GraphicalEnvironmentBase(env, env_param, initial_state)
     controller.run()

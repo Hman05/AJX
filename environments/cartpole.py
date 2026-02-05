@@ -1,17 +1,15 @@
 import jax.numpy as jnp
 from ajx import *
-from environments.environment import Environment
+from ajx.environment import Environment
 
 import scipy
-from typing import Dict
-from util.deepinsert import deepinsert
 import scenes.graphics.geometry as geometry
 
 from ajx.param import SimulationParameters
 
 
 class CartPole(Environment):
-    def __init__(self, override_param: Dict, timestep: float):
+    def __init__(self, timestep: float):
         self.timestep = timestep
 
         self.build_sim()
@@ -25,8 +23,6 @@ class CartPole(Environment):
                 "motor": self.motor_param,
             },
         )
-
-        self.param = self.default_param.insert(override_param)
 
         super().post_init()
 

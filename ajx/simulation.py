@@ -3,7 +3,7 @@ import numpy as np
 import jax
 import ajx.math as math
 
-from ajx.rigid_body import (
+from ajx.definitions import (
     RigidBody,
     State,
     Configuration,

@@ -8,14 +8,13 @@ if __name__ == "__main__":
     timestep = 0.016667
 
     environment = FreeBody(
-        override_param={},
         timestep=timestep,
         use_gyroscopic=True,
     )
-    initial_state = {}
+    env_param = environment.default_param.insert(src={})
     angvel = jnp.array([0.0, 0.5, 0.5])
 
     initial_state = environment.state_from_angular_velocity(angvel)
 
-    controller = GraphicalEnvironmentBase(environment, initial_state)
+    controller = GraphicalEnvironmentBase(environment, env_param, initial_state)
     controller.run()

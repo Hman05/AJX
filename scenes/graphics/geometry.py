@@ -1,5 +1,5 @@
 import jax.numpy as jnp
-from ajx.rigid_body import RigidBodyParameters
+from ajx.definitions import RigidBodyParameters
 from panda3d.core import Quat
 
 

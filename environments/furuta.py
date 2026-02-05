@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import ajx.math as math
 from ajx import *
-from environments.environment import Environment
+from ajx.environment import Environment
 
 from typing import Dict
 import scenes.graphics.geometry as geometry
@@ -12,7 +12,6 @@ from ajx.param import SimulationParameters
 class Furuta(Environment):
     def __init__(
         self,
-        override_param: Dict,
         timestep: float,
         reference_timestep: Optional[float],
         use_gyroscopic: bool,
@@ -46,8 +45,6 @@ class Furuta(Environment):
                 ),
             },
         )
-
-        self.param = self.default_param.insert(override_param)
 
         super().post_init()
 

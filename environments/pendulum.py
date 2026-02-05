@@ -1,5 +1,5 @@
 import jax.numpy as jnp
-from environments.environment import Environment
+from ajx.environment import Environment
 import ajx.simulation as simulation
 from ajx import *
 from util.deepinsert import deepinsert

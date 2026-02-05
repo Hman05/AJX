@@ -10,7 +10,7 @@ from loguru import logger
 
 from ajx import math
 from ajx.definitions import ConstraintParameters
-from ajx.rigid_body import RigidBodyParameters
+from ajx.definitions import RigidBodyParameters
 from util.deepinsert import deepinsert
 
 

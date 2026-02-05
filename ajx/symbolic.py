@@ -1,6 +1,6 @@
 import numpy as np
 from ajx.constraints import Constraint
-from ajx.rigid_body import RigidBody
+from ajx.definitions import RigidBody
 from typing import Tuple
 
 

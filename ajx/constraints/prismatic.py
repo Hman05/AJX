@@ -6,8 +6,8 @@ from functools import partial
 from ajx.constraints.base import Constraint
 from typing import Optional
 import ajx.math as math
-from ajx.rigid_body import Configuration
-from ajx.rigid_body import State
+from ajx.definitions import Configuration
+from ajx.definitions import State
 
 
 @struct.dataclass

@@ -2,8 +2,8 @@ import jax.numpy as jnp
 from jax import vmap
 from ajx import *
 import ajx.simulation as simulation
-from ajx.rigid_body import RigidBodyParameters, RigidBody
-from environments.environment import Environment
+from ajx.definitions import RigidBodyParameters, RigidBody
+from ajx.environment import Environment
 
 from util.deepinsert import deepinsert
 import scenes.graphics.geometry as geometry
@@ -13,7 +13,7 @@ from ajx.param import SimulationParameters
 
 
 class FreeBody(Environment):
-    def __init__(self, override_param: Dict, timestep: float, use_gyroscopic: bool):
+    def __init__(self, timestep: float, use_gyroscopic: bool):
         self.timestep = timestep
         self.use_gyroscopic = use_gyroscopic
 
@@ -26,7 +26,6 @@ class FreeBody(Environment):
             self.constraint_param,
             sparse_param={},
         )
-        self.param = self.default_param.insert(override_param)
 
         super().post_init()
 
