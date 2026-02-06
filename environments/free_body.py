@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 from jax import vmap
 from ajx import *
-import ajx.simulation as simulation
+from ajx.simulation import SimulationSettings
 from ajx.definitions import RigidBodyParameters, RigidBody
 from ajx.environment import Environment
 
@@ -13,11 +13,9 @@ from ajx.param import SimulationParameters
 
 
 class FreeBody(Environment):
-    def __init__(self, timestep: float, use_gyroscopic: bool):
-        self.timestep = timestep
-        self.use_gyroscopic = use_gyroscopic
+    def __init__(self, sim_settings: SimulationSettings):
 
-        self.build_sim()
+        self._build_sim(sim_settings)
 
         super().post_init()
 
@@ -27,7 +25,7 @@ class FreeBody(Environment):
             "use_gyroscopic": self.use_gyroscopic,
         }
 
-    def build_sim(self):
+    def _build_sim(self, sim_settings):
         inertia = jnp.array([1.0, 2.0, 4.0])
         extents = geometry.Box.extents_from_interia(inertia, 1.0)
         self.box = geometry.Box(
@@ -54,12 +52,11 @@ class FreeBody(Environment):
         sensors = (rotation_encoder,)
 
         self.sim = Simulation(
-            self.timestep,
+            sim_settings,
             rigid_bodies,
             constraints,
             sensors,
             pre_step_modifiers,
-            self.use_gyroscopic,
         )
         self.default_param = SimulationParameters(
             jnp.array([0.0, 0.0, 0.0]),

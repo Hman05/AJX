@@ -13,23 +13,13 @@ from ajx.param import SimulationParameters
 class Pendulum(Environment):
     def __init__(
         self,
+        sim_settings: SimulationSettings,
         has_quadratic_damping: bool,
-        timestep: float,
     ):
-        self.timestep = timestep
         self.has_quadratic_damping = has_quadratic_damping
 
-        self.build_sim()
+        self._build_sim(sim_settings)
         self.control_names = []
-
-        self.default_param = SimulationParameters(
-            jnp.array([0.0, -9.82, 0.0]),
-            self.rb_param,
-            self.constraint_param,
-            sparse_param={
-                "damping": self.damping_param,
-            },
-        )
 
         super().post_init()
 
@@ -52,7 +42,7 @@ class Pendulum(Environment):
     def hinge_offset(self):
         return self.param["hinge"].frame_b.position[1]
 
-    def build_sim(self):
+    def _build_sim(self, sim_settings):
         self.pendulum_box = geometry.Box(
             "pendulum_box", 0.08, 1.28, 0.08, (0.0, 0.0, 0.0), color=(0.9, 0.2, 0.2)
         )
@@ -80,7 +70,7 @@ class Pendulum(Environment):
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), frame_rotation),
             frame_b=Frame(jnp.array([0.0, 0.091, 0.0]), frame_rotation),
             compliance=1e-5,
-            damping=2 * self.timestep,
+            damping=2 * sim_settings.timestep,
             b=0.0004,
             name="hinge",
         )
@@ -103,12 +93,20 @@ class Pendulum(Environment):
         self.sensors = (self.rotary_decoder,)
 
         self.sim = simulation.Simulation(
-            self.timestep,
+            sim_settings,
             self.rigid_bodies,
             self.constraints,
             self.sensors,
             self.pre_step_modifiers,
-            use_gyroscopic=False,
+        )
+
+        self.default_param = SimulationParameters(
+            jnp.array([0.0, -9.82, 0.0]),
+            self.rb_param,
+            self.constraint_param,
+            sparse_param={
+                "damping": self.damping_param,
+            },
         )
 
         self.geometry_list = (self.pendulum_box,)

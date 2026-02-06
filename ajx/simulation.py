@@ -24,13 +24,25 @@ from ajx.definitions import RigidBodyParameters
 from flax import struct
 from functools import partial
 from jax import jit
+from enum import Enum
 
 from ajx.symbolic import (
     get_constraint_sparsity,
     get_schur_fillin_sparsity,
 )
+from flax import struct
 
-do_sparse = False
+
+class Solver(Enum):
+    DENSE_LINEAR = 1
+    SPARSE_LINEAR = 2
+
+
+@struct.dataclass
+class SimulationSettings:
+    timestep: float
+    use_gyroscopic: bool = False
+    solver: Solver = Solver.DENSE_LINEAR
 
 
 @struct.dataclass
@@ -62,16 +74,19 @@ class Simulation:
         Solve for the forces to step from one state to a target state.
     """
 
-    timestep: float
+    settings: SimulationSettings
     rigid_body_list: Tuple[RigidBody]
     constraint_list: Tuple[Constraint]
     sensor_list: Tuple[Sensor]
     pre_step_modifiers: Tuple[PreStepModifier]
-    use_gyroscopic: bool
 
     @property
     def h_inv(self):
-        return 1 / self.timestep
+        return 1 / self.settings.timestep
+
+    @property
+    def h(self):
+        return self.settings.timestep
 
     @partial(jit, static_argnums=0)
     def pre_step(
@@ -127,8 +142,8 @@ class Simulation:
         def body_step(gvel_next, conf):
             vel_next = gvel_next.data[:3]
             ang_next = gvel_next.data[3:]
-            pos_next = conf.pos + self.timestep * vel_next
-            delta_rot = jit(math.from_rotation_vector)(ang_next * self.timestep)
+            pos_next = conf.pos + self.h * vel_next
+            delta_rot = jit(math.from_rotation_vector)(ang_next * self.h)
 
             rot_next = jit(math.quat_mul)(delta_rot, conf.rot)
             rot_next = jit(math.normalize)(rot_next)
@@ -212,7 +227,7 @@ class Simulation:
         # p_ext = M_vdelta - G.vector_mul(lbda)
         p_ext = M_vdelta - G_dense.T @ lbda
 
-        delta = p_ext - f_ext.flatten() * self.timestep
+        delta = p_ext - f_ext.flatten() * self.h
 
         return delta
 
@@ -225,7 +240,7 @@ class Simulation:
             mass = rb_param.mass
             gyroscopic_torque = jnp.array([0.0, 0.0, 0.0])
             ang = state.gvel.ang
-            if self.use_gyroscopic:
+            if self.settings.use_gyroscopic:
                 rotation = math.rotation_matrix(state.conf.rot)
                 world_inertia = rotation @ rb_param.inertia @ rotation.T
                 gyroscopic_torque = -jnp.cross(ang, world_inertia @ ang)
@@ -271,7 +286,7 @@ class Simulation:
             state, param
         )
 
-        if do_sparse:
+        if self.settings.solver == Solver.SPARSE_LINEAR:
             S_sparse, rhs, M_inv_f, rsi_dict = self._assemble_schur(
                 G,
                 M_inv_stacked.flatten(),
@@ -285,16 +300,18 @@ class Simulation:
 
             lbda = ldlt_solve(S_sparse, rsi_list, rhs)
             GTlbda = G.vector_mul(lbda)
-        else:
+        elif self.settings.solver == Solver.DENSE_LINEAR:
             M_inv = jax.scipy.linalg.block_diag(*M_inv_stacked)
             G_dense = G.to_scalar_matrix()
             S = G_dense @ M_inv @ G_dense.T + jnp.diag(Sigma_data)
             M_inv_f = M_inv @ f_ext.flatten()
-            rhs = b_data - G_dense @ gvel - self.timestep * G_dense @ M_inv_f
+            rhs = b_data - G_dense @ gvel - self.h * G_dense @ M_inv_f
             lbda = jax.scipy.linalg.solve(S, rhs)
             GTlbda = G_dense.T @ lbda
+        else:
+            raise NotImplementedError
         constraint_imp = jax.vmap(jnp.matmul)(M_inv_stacked, GTlbda.reshape(-1, 6))
-        qdot_next = gvel + constraint_imp.flatten() + self.timestep * M_inv_f
+        qdot_next = gvel + constraint_imp.flatten() + self.h * M_inv_f
 
         code = 0
         gvel_next = GeneralizedVelocity(qdot_next.reshape(-1, 6))
@@ -571,7 +588,7 @@ class Simulation:
             M_inv_slice_begin = M_inv_slice_begin
             f_slice_begin = f_slice_end
 
-        M_inv_a = gvel - self.timestep * M_inv_f
+        M_inv_a = gvel - self.h * M_inv_f
         b_star = b_data - G.mul_vector(M_inv_a)
         return S, b_star, M_inv_f, rsi_dict
 

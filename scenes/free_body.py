@@ -2,14 +2,14 @@ from scenes.base import GraphicalEnvironmentBase
 
 from environments.free_body import FreeBody
 
-from ajx import *
+from ajx.simulation import SimulationSettings, Solver
+import jax.numpy as jnp
 
 if __name__ == "__main__":
     timestep = 0.016667
 
     environment = FreeBody(
-        timestep=timestep,
-        use_gyroscopic=True,
+        sim_settings=SimulationSettings(timestep, True, Solver.DENSE_LINEAR)
     )
     env_param = environment.default_param.insert(src={})
     angvel = jnp.array([0.0, 0.5, 0.5])

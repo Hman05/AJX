@@ -44,7 +44,7 @@ class GraphicalEnvironmentBase(DirectObject):
         trajectory_path=None,
         synchronized_start_k=0,
     ):
-        self.timestep = env.timestep
+        self.timestep = env.sim.settings.timestep
         self.environment = env
         self.env_param = env_param
         self.initial_state = initial_state

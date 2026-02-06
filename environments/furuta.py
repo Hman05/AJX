@@ -12,20 +12,17 @@ from ajx.param import SimulationParameters
 class Furuta(Environment):
     def __init__(
         self,
-        timestep: float,
-        reference_timestep: Optional[float],
-        use_gyroscopic: bool,
+        sim_settings: SimulationSettings,
+        reference_timestep: Optional[float] = None,
     ):
-        self.use_gyroscopic = use_gyroscopic
         self.n_control = 1
 
-        self.timestep = timestep
         self.reference_timestep = reference_timestep
         if not reference_timestep:
-            self.reference_timestep = timestep
+            self.reference_timestep = sim_settings.timestep
 
         self.control_names = ["voltage"]
-        self._build_sim()
+        self._build_sim(sim_settings)
 
         super().post_init()
 
@@ -52,17 +49,11 @@ class Furuta(Environment):
         }
         return {name: pname_mapping.get(name, name) for name in pnames}
 
-    def _build_sim(self):
+    def _build_sim(self, sim_settings):
         com_displacement1 = 0.11
         com_displacement2 = 0.091
         length1 = 0.248
         length2 = 0.395
-
-        arm1_inertia = AxisSymmetricInertia("arm1_inertia", "arm1", False, "yxx")
-        arm1_inertia_param = AxisSymmetricInertiaParam(0.012, 1e-4)
-
-        arm2_inertia = AxisSymmetricInertia("arm2_inertia", "arm2", False, "xyx")
-        arm2_inertia_param = AxisSymmetricInertiaParam(0.0016, 1e-4)
 
         arm1_box = geometry.Model(
             "arm1_box", "arm1.bam", translation=(-com_displacement1, 0.0, 0.0)
@@ -93,7 +84,9 @@ class Furuta(Environment):
         rotation3 = rotation2
 
         electric_motor_param = GainMotorParameters(0.0004, 7.5)  # 0.00265, 0.0039
-        electric_motor = GainMotor2("electric_motor", self.hinge1, self.timestep, 0)
+        electric_motor = GainMotor2(
+            "electric_motor", self.hinge1, sim_settings.timestep, 0
+        )
         # self.electric_motor = TargetSpeedMotor("electric_motor", "hinge1_motor", 0)
 
         hinge1_param = ConstraintParameters.create(
@@ -144,12 +137,11 @@ class Furuta(Environment):
         sensors = (rotary_decoder1, rotary_decoder2)
 
         self.sim = Simulation(
-            self.timestep,
+            sim_settings,
             rigid_bodies,
             constraints,
             sensors,
             pre_step_modifiers,
-            self.use_gyroscopic,
         )
         # Specification of Maxon 218009
         # https://www.maxongroup.com/maxon/view/product/motor/dcmotor/re/re40/218009
