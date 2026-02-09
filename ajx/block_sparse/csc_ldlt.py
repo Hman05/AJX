@@ -6,16 +6,26 @@ from itertools import product
 import numpy as np
 
 
-def ldlt_solve(A: VBCMatrix, data_ptr: jax.Array, b: jax.Array):
+def ldlt_solve(A: VBCMatrix, data_ptr: jax.Array, b: jax.Array) -> jax.Array:
     """
-    Solves the linear system Ax = b making use of LDLT factorization where A is of variable block row format.
+    Solve the linear system Ax = b using an LDLT factorization, where A is stored in a variable block row (VBC) matrix format.
+
+    Limitations
+    ----------
+    It is assumed that fill-ins are known ahead of time and allocated as zeros in A.
+
+    The current implementation relies on Python for-loops. When used under `jax.jit`, these loops are unrolled before compilation,
+    which may lead to long compilation times and suboptimal runtime performance.
+
+    Additionally, `jax.numpy.linalg.solve` is highly optimized and will generally outperform this implementation. It also uses pivoting to
+    improve numerical conditioning, whereas this solver does not.
 
     Parameters
     ----------
     A: VBCMatrix
         The matrix to be factorized. A is assumed to be symmetric.
     data_ptr: jax.Array
-        A list of indices to where each block starts in the contigous data array A.data. Also known as rediction scattering indexation (rsi).
+        A list of indices to where each block starts in the contiguous data array A.data. Also known as rediction scattering indexation (rsi).
     b: jax.Array
         The right hand side vector.
 
