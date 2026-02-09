@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-from typing import Callable, List, Tuple, Any
+from typing import Callable, List, Tuple, Any, Dict
 from dataclasses import dataclass, field
 from jax.tree_util import register_pytree_node_class
 from flax import struct
@@ -18,7 +18,15 @@ def ajx_dataclass(cls):
     cls = dataclass(cls)
     array_types = ["jnp.array", "jax.Array"]
     string_types = ["Tuple[str]", "str"]
-    ajx_types = ["Frame", "Configuration", "GeneralizedVelocity", "State"]
+    dict_attr_types = ["Dict"]
+    ajx_types = [
+        "Frame",
+        "Configuration",
+        "GeneralizedVelocity",
+        "State",
+        "RigidBodyParameters",
+        "ConstraintParameters",
+    ]
     array_attr_names = [
         attr
         for attr, type_str in cls.__annotations__.items()
@@ -27,12 +35,18 @@ def ajx_dataclass(cls):
     ajx_attr_names = [
         attr for attr, type_str in cls.__annotations__.items() if type_str in ajx_types
     ]
+    dict_attr_names = [
+        attr
+        for attr, type_str in cls.__annotations__.items()
+        if type_str in dict_attr_types
+    ]
     dynamic_attr_names = [*array_attr_names, *ajx_attr_names]
     str_attr_names = [
         attr
         for attr, type_str in cls.__annotations__.items()
         if type_str in string_types
     ]
+
     static_attr_names = str_attr_names
 
     def stack(objects: List):
@@ -88,16 +102,36 @@ def ajx_dataclass(cls):
 
         return cls(**empty_attrs)
 
+    def create_in_axes(self, mapped_axes: Dict):
+        attrs = {}
+        for key in array_attr_names:
+            # TODO: The dimensions of the array is unkonwn. We just assume that it is
+            # safe to put as zero
+            attrs[key] = None
+        for key in ajx_attr_names:
+            attrs[key] = None
+        for key in dict_attr_names:
+            attrs[key] = None
+        for key in str_attr_names:
+            attrs[key] = self.__dict__[key]
+        for key, value in mapped_axes.items():
+            attrs[key] = value
+        return cls(**attrs)
+
     def __hash__(self):
         # TODO: Is this a bad idea?
         vals = tuple(self.__dict__[key] for key in str_attr_names)
         return hash(vals)
 
     cls.stack = stack
-    cls.copy = copy
+    cls.create_in_axes = create_in_axes
+    if not hasattr(cls, "copy"):
+        cls.copy = copy
     cls.create_empty_stack = create_empty_stack
-    cls.tree_flatten = tree_flatten
-    cls.tree_unflatten = tree_unflatten
+    if not hasattr(cls, "tree_flatten"):
+        cls.tree_flatten = tree_flatten
+    if not hasattr(cls, "tree_unflatten"):
+        cls.tree_unflatten = tree_unflatten
     cls.__getitem__ = __getitem__
     cls.__hash__ = __hash__
 
@@ -247,19 +281,23 @@ class ConstraintParameters:
     def insert(self, src):
         new = self.copy()
         for constraint_name, src2 in src.items():
-            if not constraint_name in self.names:
+            if constraint_name in [":", "all"]:
+                idx = jnp.s_[:]
+            elif constraint_name in self.names:
+                idx = self.names.index(constraint_name)
+            else:
                 msg = f"The provided source ({constraint_name}) does not index destination correctly"
                 raise Exception(msg)
-            idx = self.names.index(constraint_name)
+
             if src2 is None:
                 continue
             for prop, val in src2.items():
-                if prop == "compliance05":
-                    new.data = new.data.at[idx, 14:20].set(val)
+                if prop == "compliance":
+                    new.compliance = val
                 elif prop == "compliance04":
                     new.compliance = new.compliance.at[idx, :4].set(val)
                 elif prop == "compliance5":
-                    new.compliance = new.compliance.at[idx, 5].set(val)
+                    new.compliance = new.compliance.at[..., idx, 5].set(val)
                 elif prop == "damping05":
                     new.data = new.data.at[idx, 20:26].set(val)
                 elif prop == "damping04":
