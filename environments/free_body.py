@@ -18,12 +18,6 @@ class FreeBody(Environment):
 
         super().post_init()
 
-    def get_hyperparam(self):
-        return {
-            "timestep": self.timestep,
-            "use_gyroscopic": self.use_gyroscopic,
-        }
-
     def _build_sim(self, sim_settings):
         inertia = jnp.array([1.0, 2.0, 4.0])
         extents = geometry.Box.extents_from_interia(inertia, 1.0)

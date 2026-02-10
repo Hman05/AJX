@@ -16,11 +16,6 @@ class CartPole(Environment):
 
         super().post_init()
 
-    def get_hyperparam(self):
-        return {
-            "timestep": self.timestep,
-        }
-
     def _build_sim(self, sim_settings):
         thin = 0.1
         cart_z = 0.4
@@ -179,45 +174,3 @@ class CartPole(Environment):
         elif keymap["l"]:
             motor = -10.0
         return jnp.array([motor])
-
-
-def state_equation_matrices_cartpole(param):
-    m1 = param["m1"]
-    m2 = param["m2"]
-    g = param["g"]
-    l = param["l"]
-    J = param["J2"]
-
-    det = (m1 + m2) * J + m1 * m2 * l**2
-    A32 = m2**2 * l**2 * g / det
-    A42 = (m1 + m2) * m2 * l * g / det
-    B3 = (J + m2 * l**2) / det
-    B4 = m2 * l / det
-
-    # A32 = m2*g/m1
-    # A42 = (m1+m2)*g/(m2*l)
-    # B3 = 1/m2
-    # B4 = 1/(m2*l)
-
-    A = jnp.zeros((4, 4))
-    B = jnp.zeros((4, 1))
-    A = A.at[0, 2].set(1)
-    A = A.at[1, 3].set(1)
-    A = A.at[2, 1].set(A32)
-    A = A.at[3, 1].set(A42)
-    B = B.at[2, 0].set(B3)
-    B = B.at[3, 0].set(B4)
-    return A, B
-
-
-def compute_control_vector_cartpole(param):
-    # Get matrices that describe the LQR problem
-    A, B = state_equation_matrices_cartpole(param)
-    Q = jnp.diag(jnp.array([1, 10, 1, 10]))
-    r = 0.1
-
-    # Solve Riccati equation and compute control vector.
-    # The control vector should approximately be [0, 59.54303, -3.16229, 14.04044])
-    P = scipy.linalg.solve_continuous_are(A, B, Q, jnp.array([[r]]))
-    control_vector = (1 / r) * (B.T @ P)
-    return control_vector

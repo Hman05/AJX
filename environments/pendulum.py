@@ -22,25 +22,6 @@ class Pendulum(Environment):
 
         super().post_init()
 
-    def get_hyperparam(self):
-        return {
-            "timestep": self.timestep,
-            "has_quadratic_damping": self.has_quadratic_damping,
-        }
-
-    def latex_param_names(pnames):
-        pname_mapping = {
-            "hinge.b": "$b\\:(\\si{\\kilogram\\per\\second})$",
-            "damping.b": "$b\\:(\\si{\\kilogram\\per\\second})$",
-            "damping.c": "$c\\:(\\si{\\kilogram\\per\\meter})$",
-            "pendulum.inertia.0": "$J\\:(\\si{\\kilogram\\meter^2})$",
-        }
-        return {name: pname_mapping.get(name, name) for name in pnames}
-
-    @property
-    def hinge_offset(self):
-        return self.param["hinge"].frame_b.position[1]
-
     def _build_sim(self, sim_settings):
         self.pendulum_box = geometry.Box(
             "pendulum_box", 0.08, 1.28, 0.08, (0.0, 0.0, 0.0), color=(0.9, 0.2, 0.2)
@@ -118,15 +99,6 @@ class Pendulum(Environment):
             ),
         )
 
-    def stribeck_func(tangential_velocity, param):
-        mu_kinematic = jnp.abs(param["stribeck"].mu_kinematic)
-        mu_static_inc = jnp.abs(param["stribeck"].mu_static_inc)
-        decay_rate = jnp.abs(param["stribeck"].decay_rate)
-        abs_v = jnp.abs(tangential_velocity)
-        return jnp.array(
-            mu_kinematic + mu_static_inc * jnp.exp(-(abs_v**2) * decay_rate)
-        )
-
     def observation_to_configuration(self, observation, param):
         world_transform = Configuration(
             jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
@@ -139,34 +111,7 @@ class Pendulum(Environment):
 
     def state_from_angle(self, theta, param):
         initial_obs = jnp.stack([theta], axis=-1)
-        zero_velocity = jnp.zeros([6])
-
         initial_conf = self.observation_to_configuration(initial_obs, param)
         initial_gvel = GeneralizedVelocity(jnp.zeros([1, 6]))
 
         return State(initial_conf, initial_gvel)
-
-    def preprocess_observations(observations):
-        import numpy as np
-        from itertools import product
-
-        def dict_product(inp):
-            return (dict(zip(inp.keys(), values)) for values in product(*inp.values()))
-
-        loop_dims = {}
-        if "batch" in observations.dims:
-            loop_dims["batch"] = observations.batch.values
-        if "branch" in observations.dims:
-            loop_dims["branch"] = observations.branch.values
-        for indices in dict_product(loop_dims):
-            for dof in observations.dof.values:
-                done = False
-                a = observations.sel(**indices, dof=dof).values
-                while not done:
-                    delta = a[:-1] - a[1:]
-                    maxind = np.argmax(np.abs(delta))
-                    if np.abs(delta[maxind]) > np.pi / 2:
-                        a[maxind + 1 :] += np.pi * np.sign(delta[maxind])
-                    else:
-                        done = True
-        return observations

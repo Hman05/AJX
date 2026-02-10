@@ -26,29 +26,6 @@ class Furuta(Environment):
 
         super().post_init()
 
-    def get_hyperparam(self):
-        return {
-            "timestep": self.timestep,
-            "reference_timestep": self.reference_timestep,
-            "use_gyroscopic": self.use_gyroscopic,
-        }
-
-    def latex_param_names(pnames):
-        pname_mapping = {
-            "hinge1.b": "$b_1\\,(\\si{\\kilogram\\per\\second})$",
-            "hinge2.b": "$b_2\\,(\\si{\\kilogram\\per\\second})$",
-            "arm1.inertia.0": "$J_{\\tA xx}\\,(\\si{\\kilogram\\meter^2})$",
-            "arm1.inertia.1": "$J_{\\tA zz}\\,(\\si{\\kilogram\\meter^2})$",
-            "arm1.inertia.2": "$J_{\\tA yy}\\,(\\si{\\kilogram\\meter^2})$",
-            "arm2.inertia.0": "$J_{\\tB yy}\\,(\\si{\\kilogram\\meter^2})$",
-            "arm2.inertia.1": "$J_{\\tB xx}\\,(\\si{\\kilogram\\meter^2})$",
-            "arm2.inertia.2": "$J_{\\tB zz}\\,(\\si{\\kilogram\\meter^2})$",
-            "hinge1.dry_friction.mu": "$\\mu_1$",
-            "hinge2.dry_friction.mu": "$\\mu_2$",
-            "electric_motor.gain": "$\\kappa$",
-        }
-        return {name: pname_mapping.get(name, name) for name in pnames}
-
     def _build_sim(self, sim_settings):
         com_displacement1 = 0.11
         com_displacement2 = 0.091
@@ -188,83 +165,12 @@ class Furuta(Environment):
         arm2_transform = self.hinge2.place_other(param, arm1_transform, theta2)
         return Configuration.stack([arm1_transform, arm2_transform])
 
-    def preprocess_observations(observations):
-        # TODO: Should be done per sensor. Not for each environment
-        import numpy as np
-        from itertools import product
-
-        def dict_product(inp):
-            return (dict(zip(inp.keys(), values)) for values in product(*inp.values()))
-
-        loop_dims = {}
-        if "batch" in observations.dims:
-            loop_dims["batch"] = observations.batch.values
-        if "branch" in observations.dims:
-            loop_dims["branch"] = observations.branch.values
-        for indices in dict_product(loop_dims):
-            for dof in observations.dof.values:
-                done = False
-                a = observations.sel(**indices, dof=dof).values
-                while not done:
-                    delta = a[:-1] - a[1:]
-                    maxind = np.argmax(np.abs(delta))
-                    if np.abs(delta[maxind]) > np.pi / 2:
-                        a[maxind + 1 :] += np.pi * np.sign(delta[maxind])
-                    else:
-                        done = True
-
-        return observations
-
     def state_from_angles(self, theta1, theta2, param):
         initial_observations = jnp.stack([theta1, theta2], axis=-1)
 
         initial_conf = self.observation_to_configuration(initial_observations, param)
         initial_gvel = GeneralizedVelocity(jnp.zeros([2, 6]))
         return State(initial_conf, initial_gvel)
-
-    def control_func(self, observation, last_observation, key_map):
-        return jnp.array([0.0])
-        # Sensor dynamics and signal processing
-        theta1 = observation[0]
-        theta2 = observation[1]
-        prev_theta1 = last_observation[0]
-        prev_theta2 = last_observation[1]
-
-        theta1_dot = (theta1 - prev_theta1) / self.timestep
-        theta2_dot = -(theta2 - prev_theta2) / self.timestep
-
-        # Control
-        alpha = 0.75
-        gml = 9.82 * self.param["arm2"].mass * self.com_displacement2  # 0.2286711
-        joint_inertia2 = 0.0016 + 0.111 * 0.210**2
-
-        joint_inertia2 = (
-            self.param["arm2"].inertia[0]
-            + self.param["arm2"].mass * self.com_displacement2**2
-        )
-
-        weighted_energy = alpha * 0.5 * joint_inertia2 * theta2_dot**2 - gml * (
-            1 - jnp.cos(theta2)
-        )
-        gain = 40
-        kp = 0.1
-        u_energy = (
-            gain * weighted_energy * theta2_dot * jnp.cos(theta2)
-        ) - kp * theta1_dot
-        if jnp.abs(theta1) < 0.4 and jnp.abs(theta2_dot) < 8:
-            u_energy = 10
-        u = jnp.clip(jnp.array([u_energy]), -5, 5)
-        return -u
-
-        state = jnp.stack([0, theta2, theta1_dot, theta2_dot])
-        u_lqr = (control_vector @ state)[0]
-
-        # Change controller depending on angle
-        u = u_lqr * (jnp.abs(state[1]) < jnp.pi / 4) + u_energy * (
-            jnp.abs(state[1]) >= jnp.pi / 4
-        )
-        u = jnp.clip(jnp.array([u]), -10, 10)
-        return u
 
     def control_func(self, observation, last_observation, key_map):
         motor = 0.0
