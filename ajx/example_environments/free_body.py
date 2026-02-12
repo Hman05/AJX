@@ -15,6 +15,7 @@ class FreeBody(Environment):
     def __init__(self, sim_settings: SimulationSettings):
 
         self._build_sim(sim_settings)
+        self.control_names = []
 
         super().post_init()
 
