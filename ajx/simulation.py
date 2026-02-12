@@ -10,7 +10,7 @@ from ajx.definitions import (
     GeneralizedVelocity,
 )
 from ajx.pre_step_modifiers import PreStepModifier
-from ajx.constraints import TwoBodyConstraint, OneBodyConstraint
+from ajx.constraints import TwoBodyConstraint, OneBodyConstraint, Constraint
 from ajx.sensors import Sensor
 from typing import Dict, List, Tuple, Optional
 from loguru import logger
