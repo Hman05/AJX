@@ -66,13 +66,20 @@ def ajx_dataclass(cls):
         return cls(**stacked_attrs)
 
     def pack(self):
-        packed_ajx_attrs = jnp.concatenate(
-            [self.__dict__[key].pack() for key in ajx_attr_names]
-        )
-        packed_array_attrs = jnp.concatenate(
-            [self.__dict__[key] for key in array_attr_names]
-        )
-        return jnp.concatenate([packed_ajx_attrs, packed_array_attrs])
+        packed_groups = []
+        if ajx_attr_names:
+            packed_ajx_attrs = jnp.concatenate(
+                [self.__dict__[key].pack() for key in ajx_attr_names]
+            )
+            packed_groups.append(packed_ajx_attrs)
+        if array_attr_names:
+            packed_array_attrs = jnp.concatenate(
+                [self.__dict__[key].flatten() for key in array_attr_names]
+            )
+            packed_groups.append(packed_array_attrs)
+        if packed_groups:
+            return jnp.concatenate(packed_groups)
+        return jnp.array([])
 
     def copy(self):
         return cls(**self.__dict__)
