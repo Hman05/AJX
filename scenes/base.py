@@ -8,7 +8,7 @@ import numpy as np
 from jax import jit
 from graphics.geometry import Box, Square, Model
 from graphics.default_scene import Game
-from environments.pendulum import Pendulum
+from ajx.example_environments.pendulum import Pendulum
 import copy
 from panda3d.core import (
     GeomVertexFormat,

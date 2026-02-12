@@ -1,7 +1,8 @@
 import jax.numpy as jnp
 import ajx.math as math
+import os
 from ajx import *
-from ajx.environment import Environment
+from ajx.example_environments.environment import Environment
 
 from typing import Optional
 import scenes.graphics.geometry as geometry
@@ -32,11 +33,16 @@ class Furuta(Environment):
         length1 = 0.248
         length2 = 0.395
 
+        script_dir = os.path.dirname(__file__)
+        arm1_model = os.path.join(script_dir, "assets/arm1.bam")
+        arm2_model = os.path.join(script_dir, "assets/arm2.bam")
+        stand_model = os.path.join(script_dir, "assets/base.bam")
+
         arm1_box = geometry.Model(
-            "arm1_box", "arm1.bam", translation=(-com_displacement1, 0.0, 0.0)
+            "arm1_box", arm1_model, translation=(-com_displacement1, 0.0, 0.0)
         )
         arm2_box = geometry.Model(
-            "arm2_box", "arm2.bam", translation=(0.0, com_displacement2, 0.0)
+            "arm2_box", arm2_model, translation=(0.0, com_displacement2, 0.0)
         )
 
         arm1 = RigidBody("arm1", ("arm1_box",))
@@ -149,7 +155,7 @@ class Furuta(Environment):
             ),
             geometry.Model(
                 "stand",
-                "base.bam",
+                stand_model,
                 translation=(0.0, -0.8183 - 0.0071 - 0.01, -0.06925),
             ),
         ]

@@ -1,7 +1,6 @@
 from scenes.base import GraphicalEnvironmentBase
 
-from environments.cartpole import CartPole
-from functools import partial
+from ajx.example_environments.cartpole import CartPole
 
 from ajx import *
 

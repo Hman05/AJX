@@ -1,7 +1,6 @@
 from scenes.base import GraphicalEnvironmentBase
 
-from environments.free_body import FreeBody
-
+from ajx.example_environments.free_body import FreeBody
 from ajx.simulation import SimulationSettings, Solver
 import jax.numpy as jnp
 

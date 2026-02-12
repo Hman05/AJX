@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 from ajx import *
-from ajx.environment import Environment
+from ajx.example_environments.environment import Environment
 
 import scipy
 import scenes.graphics.geometry as geometry

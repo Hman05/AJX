@@ -3,7 +3,7 @@ from jax import vmap
 from ajx import *
 from ajx.simulation import SimulationSettings
 from ajx.definitions import RigidBodyParameters, RigidBody
-from ajx.environment import Environment
+from ajx.example_environments.environment import Environment
 
 import scenes.graphics.geometry as geometry
 

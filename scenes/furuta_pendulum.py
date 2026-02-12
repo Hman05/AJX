@@ -1,6 +1,6 @@
 from scenes.base import GraphicalEnvironmentBase
 
-from environments.furuta import Furuta
+from ajx.example_environments.furuta import Furuta
 
 from ajx import *
 
