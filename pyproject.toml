@@ -1,7 +1,7 @@
 [project]
 name = "ajx"
 description = "titanic_ml example package"
-version = "0.1.0"
+version = "0.1.1"
 authors = [
     { name = "Hannes Marklund", email = "hannes.marklund@umu.se" }
 ]
