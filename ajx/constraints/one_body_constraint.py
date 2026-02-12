@@ -48,6 +48,13 @@ class OneBodyConstraint(Constraint):
     #     self.body = body
     #     self.constraint_type = constraint_type
 
+    def get_multiplier_names(self) -> Tuple[str]:
+        if self.constraint_type == ConstraintType.HINGE.value:
+            return ("nx", "ny", "nz", "n_bend", "n_torsion", "t")
+        elif self.constraint_type == ConstraintType.HINGE.value:
+            return ("nu", "nw", "n_bend1", "n_torsion", "n_bend2", "t")
+        return ()
+
     @partial(jit, static_argnums=0)
     def func(
         self,

@@ -45,24 +45,33 @@ class Environment(ABC):
         new_state = self.sim.post_step(state, qdot_next)
         return new_state, observation
 
+    def get_multiplier_names(self):
+        return [
+            item
+            for constraint in self.sim.constraint_list
+            for item in [
+                f"{constraint.name}.{mn}" for mn in constraint.get_multiplier_names()
+            ]
+        ]
+
     def get_state_names(self):
         pos_coords = [".x", ".y", ".z"]
         rot_coords = [".qs", ".qx", ".qy", ".qz"]
         gvel_coords = [".x_dot", ".y_dot", ".z_dot", ".rx_dot", ".ry_dot", ".rz_dot"]
         pos_dof_names = [
             item
-            for body_name in self.rb_param.names
-            for item in [body_name + c for c in pos_coords]
+            for rb in self.sim.rigid_body_list
+            for item in [rb.name + c for c in pos_coords]
         ]
         rot_dof_names = [
             item
-            for body_name in self.rb_param.names
-            for item in [body_name + c for c in rot_coords]
+            for rb in self.sim.rigid_body_list
+            for item in [rb.name + c for c in rot_coords]
         ]
         gvel_dof_names = [
             item
-            for body_name in self.rb_param.names
-            for item in [body_name + c for c in gvel_coords]
+            for rb in self.sim.rigid_body_list
+            for item in [rb.name + c for c in gvel_coords]
         ]
         return [*pos_dof_names, *rot_dof_names, *gvel_dof_names]
 
@@ -72,18 +81,18 @@ class Environment(ABC):
         gvel_coords = [".x_dot", ".y_dot", ".z_dot", ".rx_dot", ".ry_dot", ".rz_dot"]
         pos_dof_names = [
             item
-            for body_name in self.rb_param.names
-            for item in [body_name + c for c in pos_coords]
+            for rb in self.sim.rigid_body_list
+            for item in [rb.name + c for c in pos_coords]
         ]
         rot_dof_names = [
             item
-            for body_name in self.rb_param.names
-            for item in [body_name + c for c in rot_coords]
+            for rb in self.sim.rigid_body_list
+            for item in [rb.name + c for c in rot_coords]
         ]
         gvel_dof_names = [
             item
-            for body_name in self.rb_param.names
-            for item in [body_name + c for c in gvel_coords]
+            for rb in self.sim.rigid_body_list
+            for item in [rb.name + c for c in gvel_coords]
         ]
         return [*pos_dof_names, *rot_dof_names, *gvel_dof_names]
 
