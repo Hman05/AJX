@@ -300,21 +300,21 @@ class ConstraintParameters:
                 if prop == "compliance":
                     new.compliance = val
                 elif prop == "compliance04":
-                    new.compliance = new.compliance.at[idx, :4].set(val)
+                    new.compliance = new.compliance.at[..., idx, :4].set(val)
                 elif prop == "compliance5":
                     new.compliance = new.compliance.at[..., idx, 5].set(val)
-                elif prop == "damping05":
-                    new.data = new.data.at[idx, 20:26].set(val)
+                elif prop == "damping":
+                    new.damping = val
                 elif prop == "damping04":
-                    new.data = new.data.at[idx, 20:25].set(val)
+                    new.damping = new.damping.at[..., idx, :4].set(val)
                 elif prop == "damping5":
-                    new.data = new.data.at[idx, 25].set(val)
-                elif prop == "frame_b_pos_x":
-                    new.data = new.data.at[idx, 7].set(val)
-                elif prop == "frame_b_pos_y":
-                    new.data = new.data.at[idx, 8].set(val)
+                    new.damping = new.damping.at[..., idx, 5].set(val)
+                elif prop == "target":
+                    new.target = val
+                elif prop == "target04":
+                    new.target = new.target.at[..., idx, :4].set(val)
                 elif prop == "target5":
-                    new.target = new.target.at[idx, 5].set(val)
+                    new.target = new.target.at[..., idx, 5].set(val)
                 else:
                     msg = f"The provided source ({prop}) does not index destination correctly"
                     raise Exception(msg)
@@ -422,3 +422,4 @@ class RigidBodyParameters:
                 else:
                     msg = f"The provided source ({prop}) does not index destination correctly"
                     raise Exception(msg)
+        return new
