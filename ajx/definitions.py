@@ -134,6 +134,7 @@ def ajx_dataclass(cls):
         return hash(vals)
 
     cls.stack = stack
+    cls.pack = pack
     cls.create_in_axes = create_in_axes
     if not hasattr(cls, "copy"):
         cls.copy = copy
