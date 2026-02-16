@@ -211,7 +211,7 @@ class Simulation:
             An array containing the required force(s).
         """
         for component in self.pre_step_modifiers:
-            param = param.insert(component.update_params(state, action, param))
+            param = param.tree_replace(component.update_params(state, action, param))
 
         f_ext = self._gravity_gyro_force3D(state, param)
         M_stacked, _, G, Sigma_data, b_data = self._assemble_blocks(state, param)
@@ -258,7 +258,7 @@ class Simulation:
             A 2D array containing the effective mass M_e.
         """
         for component in self.pre_step_modifiers:
-            param = param.insert(component.update_params(state, action, param))
+            param = param.tree_replace(component.update_params(state, action, param))
 
         M_stacked, M_inv_stacked, G, Sigma_data, b_data, _ = self.assemble_blocks(
             state, param
