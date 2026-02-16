@@ -147,6 +147,22 @@ class ParameterNode:
                     raise ValueError("Unsupported type")
         return new
 
+    def flatten(self):
+        """
+        Flattens this ParameterNode.
+
+        The flattening order (i.e. the order of elements in the output list) is deterministic,
+        corresponding to a fields-ordered depth-first tree traversal.
+        """
+        arr = []
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if isinstance(value, ParameterNode):
+                arr.extend(value.flatten())
+            elif isinstance(value, jax.Array):
+                arr.append(value.flatten())
+        return jnp.concatenate(arr)
+
     def tangent_size(self):
         """
         Returns the dimension of the tangent space associated with this node.
