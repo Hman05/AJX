@@ -7,8 +7,6 @@ from ajx.example_environments.environment import Environment
 from typing import Optional
 import scenes.graphics.geometry as geometry
 
-from ajx.param import SimulationParameters
-
 
 class Furuta(Environment):
     def __init__(
@@ -124,17 +122,20 @@ class Furuta(Environment):
         )
         # Specification of Maxon 218009
         # https://www.maxongroup.com/maxon/view/product/motor/dcmotor/re/re40/218009
+        SparseParamClass = create_parameter_node(
+            "FurutaSparseParam", ("electric_motor", "gravity")
+        )
         self.default_param = SimulationParameters(
             jnp.array([0.0, -9.82, 0.0]),
             rb_param,
             constraint_param,
-            sparse_param={
-                "electric_motor": electric_motor_param,
-                "gravity": TiltGravityParam(
+            SparseParamClass(
+                electric_motor=electric_motor_param,
+                gravity=TiltGravityParam(
                     jnp.array([0.0, -9.82, 0.0]),
                     jnp.array([1.0, 0.0, 0.0, 0.0]),
                 ),
-            },
+            ),
         )
 
         self.geometry_list = (arm1_box, arm2_box)

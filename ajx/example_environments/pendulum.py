@@ -3,10 +3,7 @@ from ajx.example_environments.environment import Environment
 import ajx.simulation as simulation
 from ajx import *
 
-from typing import Dict
 import scenes.graphics.geometry as geometry
-
-from ajx.param import SimulationParameters
 
 
 class Pendulum(Environment):
@@ -76,13 +73,12 @@ class Pendulum(Environment):
             self.pre_step_modifiers,
         )
 
+        SparseParamClass = create_parameter_node("PendulumSparseParam", ("damping",))
         self.default_param = SimulationParameters(
             jnp.array([0.0, -9.82, 0.0]),
             self.rb_param,
             self.constraint_param,
-            sparse_param={
-                "damping": self.damping_param,
-            },
+            SparseParamClass(damping=self.damping_param),
         )
 
         self.geometry_list = (self.pendulum_box,)

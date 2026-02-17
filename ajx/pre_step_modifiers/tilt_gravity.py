@@ -1,14 +1,12 @@
 from flax import struct
 import jax
-from dataclasses import dataclass, field
-from abc import ABC, abstractmethod
-from typing import Literal
 import ajx.math as math
 from ajx.pre_step_modifiers.base import PreStepModifier
+from ajx.tree_util import ParameterNode
 
 
 @struct.dataclass
-class TiltGravityParam:
+class TiltGravityParam(ParameterNode):
     default_gravity: jax.Array
     gravity_rotation: jax.Array
 

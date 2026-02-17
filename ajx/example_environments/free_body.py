@@ -1,14 +1,10 @@
 import jax.numpy as jnp
-from jax import vmap
 from ajx import *
 from ajx.simulation import SimulationSettings
 from ajx.definitions import RigidBodyParameters, RigidBody
 from ajx.example_environments.environment import Environment
 
 import scenes.graphics.geometry as geometry
-
-from typing import Dict
-from ajx.param import SimulationParameters
 
 
 class FreeBody(Environment):
@@ -52,11 +48,12 @@ class FreeBody(Environment):
             sensors,
             pre_step_modifiers,
         )
+        SparseParamClass = create_parameter_node("FreeBodySparseParam", ())
         self.default_param = SimulationParameters(
             jnp.array([0.0, 0.0, 0.0]),
             rb_param,
             constraint_param,
-            sparse_param={},
+            sparse_param=SparseParamClass(),
         )
 
         self.geometry_list = (self.box,)

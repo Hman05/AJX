@@ -36,17 +36,28 @@ class Configuration(ParameterNode):
     def retract(self, update: jax.Array) -> Configuration:
         assert update.size == self.tangent_size()
         n_bodies = self.pos.shape[0]
-        update = update.reshape(n_bodies, 6)
-        delta_pos = update[:, :3]
-        delta_rot = update[:, 3:]
-        quaternion_delta = vmap(math.from_rotation_vector)(delta_rot)
-        new_pos = self.pos + delta_pos
-        new_rot = vmap(math.quat_mul)(quaternion_delta, self.rot)
+        if len(self.pos.shape) == 3:
+            n_timesteps = self.pos.shape[0]
+            return vmap(Configuration.retract)(self, update.reshape(n_timesteps, -1))
+        if len(self.pos.shape) == 2:
+            update = update.reshape(n_bodies, 6)
+            delta_pos = update[:, :3]
+            delta_rot = update[:, 3:]
+            quaternion_delta = vmap(math.from_rotation_vector)(delta_rot)
+            new_pos = self.pos + delta_pos
+            new_rot = vmap(math.quat_mul)(quaternion_delta, self.rot)
         return Configuration(new_pos, new_rot)
 
     def tangent_size(self):
-        n_bodies = self.pos.shape[0]
-        return 6 * n_bodies
+        assert len(self.pos.shape) == len(self.rot.shape)
+        if len(self.pos.shape) == 3:
+            n_timesteps = self.pos.shape[0]
+            n_bodies = self.pos.shape[1]
+            return 6 * n_timesteps * n_bodies
+        elif len(self.pos.shape) == 2:
+            n_bodies = self.pos.shape[0]
+            return 6 * n_bodies
+        raise Exception
 
 
 @struct.dataclass

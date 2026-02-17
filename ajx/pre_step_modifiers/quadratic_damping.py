@@ -1,10 +1,11 @@
 import jax.numpy as jnp
 from flax import struct
 from ajx.pre_step_modifiers.base import PreStepModifier
+from ajx.tree_util import ParameterNode
 
 
 @struct.dataclass
-class QuadraticDampingParameters:
+class QuadraticDampingParameters(ParameterNode):
     b: float
     c: float
 

@@ -2,10 +2,7 @@ import jax.numpy as jnp
 from ajx import *
 from ajx.example_environments.environment import Environment
 
-import scipy
 import scenes.graphics.geometry as geometry
-
-from ajx.param import SimulationParameters
 
 
 class CartPole(Environment):
@@ -115,13 +112,12 @@ class CartPole(Environment):
             self.pre_step_modifiers,
         )
 
+        SparseParamClass = create_parameter_node("CartPoleSparseParam", ("motor",))
         self.default_param = SimulationParameters(
             jnp.array([0.0, -9.82, 0.0]),
             rb_param,
             constraint_param,
-            sparse_param={
-                "motor": motor_param,
-            },
+            sparse_param=SparseParamClass(motor=motor_param),
         )
 
         self.geometry_list = (self.cart_box, self.pendulum_box)

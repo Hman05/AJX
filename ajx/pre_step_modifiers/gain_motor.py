@@ -3,10 +3,11 @@ from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 from typing import Literal
 from ajx.pre_step_modifiers.base import PreStepModifier
+from ajx.tree_util import ParameterNode
 
 
 @struct.dataclass
-class GainMotorParameters:
+class GainMotorParameters(ParameterNode):
     # Gamma nu =  G vk + gamma
     # [speed_constant] = [1/emf_constant] = (rad/s)/V
     # target_speed = gamma = -U(t)/emf_constant
@@ -76,11 +77,13 @@ class GainMotor2(PreStepModifier):
             ]
         )
 
+        sparse_dict_param = param.sparse_param.__dict__
+
         speed = (
             omega[0]
             - self.timestep**2
-            / param.sparse_param[self.name].inertia
-            * param.sparse_param[self.name].gain
+            / sparse_dict_param[self.name].inertia
+            * sparse_dict_param[self.name].gain
             * u[self.idx]
         )
         return {
@@ -88,7 +91,7 @@ class GainMotor2(PreStepModifier):
                 "target": {self.constraint.name: {5: speed}},
                 "compliance": {
                     self.constraint.name: {
-                        5: self.timestep / param.sparse_param[self.name].inertia
+                        5: self.timestep / sparse_dict_param[self.name].inertia
                     }
                 },
             }
