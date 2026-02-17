@@ -43,18 +43,26 @@ class ParameterNode:
         """
         Recursively replace leaves or individual stacked components.
 
-        # TODO: Add support for tuple indexation and dot-separated indexation
-
         Parameters
         ----------
         src : Dict
-            Nested dictionary specifying the replacement values. The structure
-            mirrors the hierarchical parameter tree. For stacked component
-            groups, individual components may be addressed by their symbolic
-            name.
+            Mapping that specifies replacement values in the parameter tree.
+            Keys may reference attributes in three equivalent ways:
 
-            Example
-            -------
+            1. Nested dictionaries (hierarchical structure)
+            2. Tuples of strings representing a path
+            3. Dot-separated strings representing a path
+
+            For stacked array attributes, individual components may be indexed by either
+            integers or symbolic component names. These symbolic names are resolved
+            using the node's ``names`` attribute, which must define the ordering of the
+            stacked components. If the node does not define a ``names`` attribute,
+            symbolic indexing is not supported.
+
+            Examples
+            --------
+            Nested form
+            ~~~~~~~~~~~
             {
                 "rigid_body_parameters": {
                     "constraints": {
@@ -65,11 +73,23 @@ class ParameterNode:
                 }
             }
 
+            Tuple path form
+            ~~~~~~~~~~~~~~~
+            {
+                ("rigid_body_parameters", "constraints", "compliance", "body"): 1e-5
+            }
+
+            Dot-separated form
+            ~~~~~~~~~~~~~~~~~~
+            {
+                "rigid_body_parameters.constraints.compliance.body": 1e-5
+            }
+
         Returns
         -------
         ParameterNode
-            A new instance with the specified components replaced. The original
-            object remains unchanged.
+            A new instance with the specified components replaced.
+            The original object remains unchanged (functional update).
         """
         parameter_node_attibutes = [
             key
@@ -81,7 +101,22 @@ class ParameterNode:
         ]
 
         new = self.copy()
-        for key, val in src.items():
+        for src_key, src_val in src.items():
+            if isinstance(src_key, str):
+                if "." in src_key:
+                    src_key = tuple(src_key.split("."))
+            if isinstance(src_key, tuple):
+                assert len(src_key) > 0
+                assert all(isinstance(v, str) for v in src_key)
+                # Indexing with {(x, *y): v} is the same as {x: {*y: v}}
+                # We should therefore treat this case as having key x and value {*y: v}
+                # If *y constains only one string, we should use the string as the new key
+                next_key = src_key[1:] if len(src_key) > 2 else src_key[1]
+                val = {next_key: src_val}
+                key = src_key[0]
+            else:
+                key = src_key
+                val = src_val
             if key not in self.__dict__.keys():
                 raise IndexError(
                     "The provided source does not index existing attributes"
