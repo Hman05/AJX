@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import jax
 
 from ajx.definitions import ConstraintParameters, RigidBodyParameters
@@ -20,6 +21,11 @@ class SimulationParameters(ParameterNode):
 
 
 def create_parameter_node(name: str, keys: Tuple[str]):
-    namespace = {"__annotations__": {k: object for k in keys}}
+    namespace = {
+        "__module__": __name__,
+        "__annotations__": {k: object for k in keys},
+    }
     cls = type(name, (ParameterNode,), namespace)
+
+    setattr(sys.modules[__name__], name, cls)
     return struct.dataclass(cls)
