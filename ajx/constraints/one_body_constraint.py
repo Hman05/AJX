@@ -230,7 +230,7 @@ class OneBodyConstraint(Constraint):
         delta_rotation = math.quat_mul(frame_a_rot_inv, frame_b_rot)
         axis_angle = math.to_rotation_vector(delta_rotation)
         axis = jnp.array([1.0, 0.0, 0.0])
-        theta = -jnp.dot(axis_angle, axis)
+        theta = jnp.dot(axis_angle, axis)
         free_hinge = theta * (self.constraint_type == 0)
         return free_hinge + free_prismatic
 
