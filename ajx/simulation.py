@@ -260,7 +260,7 @@ class Simulation:
         for component in self.pre_step_modifiers:
             param = param.tree_replace(component.update_params(state, action, param))
 
-        M_stacked, M_inv_stacked, G, Sigma_data, b_data, _ = self.assemble_blocks(
+        M_stacked, M_inv_stacked, G, Sigma_data, b_data = self._assemble_blocks(
             state, param
         )
         G_dense = G.to_scalar_matrix()
