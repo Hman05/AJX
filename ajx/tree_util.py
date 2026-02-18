@@ -165,6 +165,32 @@ class ParameterNode:
                     raise ValueError("Unsupported type")
         return new
 
+    def _mapped_retract(self, delta: jax.Array, keys: Tuple[str]):
+
+        slice_begin = 0
+        new = self.copy()
+        for key in keys:
+            value = self.get_value_at_path(key)
+
+            if isinstance(value, jax.Array):
+                slice_size = value.size
+                slice_end = slice_begin + slice_size
+                reshaped = delta[slice_begin:slice_end].reshape(value.shape)
+                new_value = value + reshaped
+                new = new.tree_replace({key: new_value})
+                slice_begin = slice_end
+
+            elif isinstance(value, ParameterNode):
+                slice_size = value.tangent_size()
+                slice_end = slice_begin + slice_size
+                new_value = value.retract(delta[slice_begin:slice_end])
+                new = new.tree_replace({key: new_value})
+                slice_begin = slice_end
+            else:
+                raise Exception
+
+        return new
+
     def tree_retract(self, delta: Dict) -> ParameterNode:
         """
         Recursively applies structured updates to leaves using retraction rules.
@@ -273,6 +299,8 @@ class ParameterNode:
         This value determines the expected size of flattened update vectors
         passed to ``retract``.
         """
+        if hasattr(self, "tangent_restrictions"):
+            return self._mapped_tangent_size(self.tangent_restrictions)
         size = 0
         for f in fields(self):
             value = getattr(self, f.name)
@@ -280,6 +308,19 @@ class ParameterNode:
                 size += value.tangent_size()
             elif isinstance(value, jax.Array):
                 size += value.size
+        return size
+
+    def _mapped_tangent_size(self, keys: Tuple[str]):
+        size = 0
+        for key in keys:
+            value = self.get_value_at_path(key)
+
+            if isinstance(value, jax.Array):
+                size += value.size
+            elif isinstance(value, ParameterNode):
+                size += value.tangent_size()
+            else:
+                raise Exception
         return size
 
     def retract(self, delta: jax.Array):
@@ -307,6 +348,9 @@ class ParameterNode:
             remains unchanged.
         """
         assert delta.size == self.tangent_size()
+
+        if hasattr(self, "tangent_restrictions"):
+            return self._mapped_retract(delta, self.tangent_restrictions)
 
         kwargs = {}
         slice_begin = 0

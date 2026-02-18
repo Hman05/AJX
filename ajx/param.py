@@ -19,6 +19,9 @@ class SimulationParameters(ParameterNode):
     constraint_param: ConstraintParameters
     sparse_param: ParameterNode
 
+    # Static
+    tangent_restrictions: Tuple[str] = struct.field(pytree_node=False, default=tuple())
+
 
 def create_parameter_node(name: str, keys: Tuple[str]):
     namespace = {
