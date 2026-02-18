@@ -347,7 +347,7 @@ class Simulation:
         def assemble_mass_block(
             rb_param: RigidBodyParameters, rot: jax.Array
         ) -> Tuple[jax.Array, jax.Array]:
-            m = rb_param.mass[0]
+            m = rb_param.mass
             J = rb_param.get_inertia_matrix()
             R = jit(math.rotation_matrix)(rot)
             mc = R @ rb_param.mc

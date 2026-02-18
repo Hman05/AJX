@@ -218,9 +218,13 @@ class RigidBodyParameters(ParameterNode):
     names: Tuple[str] = struct.field(pytree_node=False)
 
     # 2D Array
-    mass: jax.Array  # [nb, 1]
-    mc: jax.Array  # [nb, 3]
-    inertia: jax.Array  # [nb, 6]
+    mass: jax.Array
+    mc: jax.Array = struct.field(metadata={"second_axis_names": ("x", "y", "z")})
+    inertia: jax.Array = struct.field(
+        metadata={"second_axis_names": ("xx", "xy", "xz", "yy", "yz", "zz")}
+    )
+
+    names_mc = ("x", "y", "z")
 
     def get_inertia_matrix(self):
         # Assumes vmap...
@@ -233,47 +237,9 @@ class RigidBodyParameters(ParameterNode):
 
     @classmethod
     def create(cls, mass: float, inertia_diag: jax.Array, name: str):
-        mass = jnp.array(mass).reshape([1])[None]
+        mass = jnp.array(mass)[None]
         mc = jnp.array([0.0, 0.0, 0.0])[None]
         diag_indices = jnp.array([0, 3, 5])
         inertia = jnp.zeros(6).at[diag_indices].set(inertia_diag)[None]
         names = (name,)
         return cls(names, mass, mc, inertia)
-
-    def insert(self, src):
-        new = self.copy()
-        if src is None:
-            return new
-        if isinstance(src, jax.Array):
-            # TODO: Lazy fix for empty dict
-            return new
-        for rb_name, src2 in src.items():
-            if not rb_name in self.names:
-                msg = f"The provided source ({rb_name}) does not index destination correctly"
-                raise Exception(msg)
-            idx = self.names.index(rb_name)
-            for prop, val in src2.items():
-                if prop == "mass":
-                    new.data = new.data.at[idx, 0].set(val)
-                elif prop == "mc_x":
-                    new.data = new.data.at[idx, 1].set(val)
-                elif prop == "mc_y":
-                    new.data = new.data.at[idx, 2].set(val)
-                elif prop == "mc_z":
-                    new.data = new.data.at[idx, 3].set(val)
-                elif prop == "inertia_xx":
-                    new.data = new.data.at[idx, 4].set(val)
-                elif prop == "inertia_xy":
-                    new.data = new.data.at[idx, 5].set(val)
-                elif prop == "inertia_xz":
-                    new.data = new.data.at[idx, 6].set(val)
-                elif prop == "inertia_yy":
-                    new.data = new.data.at[idx, 7].set(val)
-                elif prop == "inertia_yz":
-                    new.data = new.data.at[idx, 8].set(val)
-                elif prop == "inertia_zz":
-                    new.data = new.data.at[idx, 9].set(val)
-                else:
-                    msg = f"The provided source ({prop}) does not index destination correctly"
-                    raise Exception(msg)
-        return new
