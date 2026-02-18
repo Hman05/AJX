@@ -4,17 +4,25 @@ import jax
 import jax.numpy as jnp
 from flax import struct
 from dataclasses import asdict, fields
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Union, Sequence
 import numbers
 
 
-def arr_tree_replace(arr, src):
+def arr_tree_replace(arr, src, name_idx_maps=()):
     for key, value in src.items():
+        if isinstance(key, tuple):
+            assert len(key) > 0
+            assert all(isinstance(v, str) for v in key)
+            next_key = key[1:] if len(key) > 2 else key[1]
+            value = {next_key: value}
+            key = key[0]
+
+        idx = name_idx_maps[0].index(key)
         if isinstance(value, (jax.Array, int, float)):
-            arr = arr.at[key].set(value)
+            arr = arr.at[idx].set(value)
         elif isinstance(value, dict):
-            for inner_key, inner_val in value.items():
-                arr = arr.at[key, inner_key].set(inner_val)
+            new = arr_tree_replace(arr[idx], value, name_idx_maps[1:])
+            arr = arr.at[idx].set(new)
         else:
             raise Exception
     return arr
@@ -133,14 +141,20 @@ class ParameterNode:
                 if isinstance(val, jax.Array):
                     new.__dict__[key] = val
                 elif isinstance(val, dict):
-                    # Stacked arrays can be indexed by name
+                    # Arrays are be indexed by names
                     if not hasattr(self, "names"):
                         raise Exception(
                             "Indexing stacked arrays requires a 'names' attriute"
                         )
-                    name_idx_map = {k: i for i, k in enumerate(self.names)}
-                    arr_src = {name_idx_map.get(k, k): v for k, v in val.items()}
-                    new.__dict__[key] = arr_tree_replace(self.__dict__[key], arr_src)
+                    name_idx_maps = [self.names]
+                    field_data = type(self).__dataclass_fields__[key]
+                    if "second_axis_names" in field_data.metadata:
+                        second_axis_names = field_data.metadata["second_axis_names"]
+                        name_idx_maps.append(second_axis_names)
+
+                    new.__dict__[key] = arr_tree_replace(
+                        self.__dict__[key], val, name_idx_maps
+                    )
 
                 else:
                     raise ValueError("Unsupported type")
@@ -386,6 +400,56 @@ class ParameterNode:
             attrs[key] = value
         return type(self)(**attrs)
 
+    def get_value_at_path(
+        self, key: Union[Sequence[str], str]
+    ) -> Union[ParameterNode, jax.Array, numbers.Real]:
+        """
+        Return the value located at a given path in the parameter tree.
+
+        Parameters
+        ----------
+        key : str or Sequence[str]
+            Path to the desired value, provided either as a dot-separated
+            string (e.g. ``"a.b.c"``) or a sequence of strings
+            (e.g. ``("a", "b", "c")``).
+
+        Returns
+        -------
+        ParameterNode or jax.Array or numbers.Real
+            The value stored at the specified path. Intermediate paths
+            return a ``ParameterNode``; terminal paths return a leaf value
+            (e.g. ``jax.Array`` or numeric scalar).
+        """
+
+        src_key = key
+        if isinstance(src_key, str):
+            path = tuple(key.split(".")) if key else ()
+        elif isinstance(key, (tuple, list)):
+            path = tuple(key)
+        else:
+            raise TypeError(f"Unsupported key type: {type(key).__name__}")
+
+        if len(path) == 0:
+            raise ValueError("Empty key/path is not supported")
+
+        head, *tail = path
+        if head not in self.__dict__:
+            raise KeyError(f"Unknown attribute '{head}'")
+
+        val = self.__dict__[head]
+        if tail:
+            if isinstance(val, ParameterNode):
+                return val.get_value_at_path(tuple(tail))
+            elif hasattr(self, "names") and len(tail) == 1:
+                idx = self.names.index(tail[0])
+                return val[idx]
+            raise TypeError(f"Value at '{head}' is not indexable")
+
+        return val
+
+    def __str__(self):
+        pass
+
 
 def flatten_dict_paths(parameter_tree):
     """
@@ -396,8 +460,10 @@ def flatten_dict_paths(parameter_tree):
     ----------
     parameter_tree : dict
         A nested dictionary representing a parameter tree. Internal nodes
-        must be dictionaries, and leaves are terminal parameter values
-        (e.g., ``jax.Array`` instances or numeric scalars).
+        must be dictionaries. Leaves may be ``jax.Array`` instances,
+        numeric scalars (``numbers.Real``), or ``ParameterNode`` objects.
+        ``ParameterNode`` instances are treated as terminal values and are
+        not traversed recursively.
 
     Returns
     -------
