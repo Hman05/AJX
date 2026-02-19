@@ -5,7 +5,7 @@ from ajx import *
 from ajx.example_environments.environment import Environment
 
 from typing import Optional
-import scenes.graphics.geometry as geometry
+import ajx.example_graphics.geometry as geometry
 
 FurutaSparseParam = create_parameter_node(
     "FurutaSparseParam", ("electric_motor", "gravity")

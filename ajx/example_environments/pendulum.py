@@ -3,7 +3,7 @@ from ajx.example_environments.environment import Environment
 import ajx.simulation as simulation
 from ajx import *
 
-import scenes.graphics.geometry as geometry
+import ajx.example_graphics.geometry as geometry
 
 PendulumSparseParamClass = create_parameter_node(
     "PendulumSparseParam",

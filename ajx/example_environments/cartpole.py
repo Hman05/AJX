@@ -2,7 +2,7 @@ import jax.numpy as jnp
 from ajx import *
 from ajx.example_environments.environment import Environment
 
-import scenes.graphics.geometry as geometry
+import ajx.example_graphics.geometry as geometry
 
 CartPoleSparseParam = create_parameter_node("CartPoleSparseParam", ("motor",))
 

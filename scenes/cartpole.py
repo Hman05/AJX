@@ -1,4 +1,4 @@
-from scenes.base import GraphicalEnvironmentBase
+from ajx.example_graphics.base import GraphicalEnvironmentBase
 
 from ajx.example_environments.cartpole import CartPole
 

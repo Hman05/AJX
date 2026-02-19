@@ -6,8 +6,8 @@ from direct.interval.IntervalGlobal import *
 import jax.numpy as jnp
 import numpy as np
 from jax import jit
-from graphics.geometry import Box, Square, Model
-from graphics.default_scene import Game
+from ajx.example_graphics.geometry import Box, Square, Model
+from ajx.example_graphics.default_scene import Game
 from ajx.example_environments.pendulum import Pendulum
 import copy
 from panda3d.core import (
@@ -433,21 +433,3 @@ class GraphicalEnvironmentBase(DirectObject):
     def run(self):
         self.game.enableMouse()
         self.game.run()
-
-
-if __name__ == "__main__":
-    timestep = 0.016667
-    environment = Pendulum(
-        override_param={},
-        timestep=timestep,
-        has_dry_friction=False,
-        has_quadratic_damping=False,
-        has_stribeck_effect=False,
-        has_inverse_compliance=False,
-    )
-    theta = 3.0
-    initial_state = environment.state_from_angle(theta, environment.param)
-
-    controller = GraphicalEnvironmentBase(environment, initial_state)
-
-    controller.run()
