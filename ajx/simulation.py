@@ -151,7 +151,7 @@ class Simulation:
             return Configuration(pos_next, rot_next)
 
         conf_next = jax.vmap(body_step)(gvel_next, state.conf)
-        state_next = State(
+        state_next = state.replace(
             conf=conf_next,
             gvel=gvel_next,
         )
@@ -273,18 +273,18 @@ class Simulation:
         """Compute the external force to apply to each rigid body"""
         g = param.gravity
 
-        def force_per_body(rb_param, state):
+        def force_per_body(rb_param, conf, gvel):
             mass = rb_param.mass
             gyroscopic_torque = jnp.array([0.0, 0.0, 0.0])
-            ang = state.gvel.ang
+            ang = gvel.ang
             if self.settings.use_gyroscopic:
-                rotation = math.rotation_matrix(state.conf.rot)
+                rotation = math.rotation_matrix(conf.rot)
                 inertia = rb_param.get_inertia_matrix()
                 world_inertia = rotation @ inertia @ rotation.T
                 gyroscopic_torque = -jnp.cross(ang, world_inertia @ ang)
             force_ext = g * mass
             # This force terms should always be zero and are only used to get derivative information
-            mc = math.rotate_vector(state.conf.rot, rb_param.mc)
+            mc = math.rotate_vector(conf.rot, rb_param.mc)
             gyroscopic_linear_force = -jnp.cross(ang, jnp.cross(ang, mc))
             torque_ext = jnp.cross(mc, g)
 
@@ -293,7 +293,9 @@ class Simulation:
             )
             return genelarized_force
 
-        gforces = jax.vmap(force_per_body)(param.rigid_body_param, state)
+        gforces = jax.vmap(force_per_body)(
+            param.rigid_body_param, state.conf, state.gvel
+        )
 
         return gforces
 
