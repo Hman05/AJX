@@ -157,7 +157,8 @@ def _quaternion_from_rotation_vector(primal, tangent):
 @jit
 def quat_residual(q1, q2):
     """
-    Get the difference between two rotations as a rotation vector
+    Get the right-invariant residual between two rotations (unit quaternions)
+    as a rotation vector
     """
     q12 = quat_mul(q1, conjugate(q2))
     return to_rotation_vector(q12)
