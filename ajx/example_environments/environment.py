@@ -33,11 +33,13 @@ class Environment(ABC):
         return jnp.concatenate(residual_list)
 
     def observe_state(self, state, u, param):
-        (qdot_next, mul), code = self.sim.pre_step(state, u, param)
+        state, ((qdot_next, mul), code) = self.sim.pre_step(state, u, param)
         return self.sim.observe(state, qdot_next, param)
 
     def step(self, state, action, param):
-        (qdot_next, multipliers), code = self.sim.pre_step(state, action, param)
+        state, ((qdot_next, multipliers), code) = self.sim.pre_step(
+            state, action, param
+        )
         observation = self.sim.observe(state, qdot_next, param)
         new_state = self.sim.post_step(state, qdot_next)
         return new_state, observation
