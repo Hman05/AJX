@@ -470,6 +470,12 @@ class Simulation:
                 "OneBodyConstraint": OneBodyConstraint.get_num_bodies(),
                 "GearConstraint": GearConstraint.get_num_bodies(),
             }
+            n_constraint_param_objects = {
+                "TwoBodyShaftConstraint": 2,
+                "TwoBodyConstraint": 1,
+                "OneBodyConstraint": 1,
+                "GearConstraint": 1,
+            }
             c_func = {
                 "TwoBodyShaftConstraint": TwoBodyShaftConstraint.func,
                 "TwoBodyConstraint": TwoBodyConstraint.func,
@@ -489,23 +495,33 @@ class Simulation:
                 "GearConstraint": (1,),
             }
             constrained_degrees = {
-                "TwoBodyShaftConstraint": 6,
+                "TwoBodyShaftConstraint": 1,
                 "TwoBodyConstraint": 6,
                 "OneBodyConstraint": 6,
                 "GearConstraint": 1,
             }
             constraint_param_dict = {
-                "TwoBodyShaftConstraint": param.constraint_param,
+                "TwoBodyShaftConstraint": param.scalar_constraint_param,
                 "TwoBodyConstraint": param.constraint_param,
                 "OneBodyConstraint": param.constraint_param,
                 "GearConstraint": param.scalar_constraint_param,
             }
             index_subtract = {
-                "TwoBodyShaftConstraint": 0,
+                "TwoBodyShaftConstraint": param.constraint_param.compliance.shape[0],
                 "TwoBodyConstraint": 0,
                 "OneBodyConstraint": 0,
                 "GearConstraint": param.constraint_param.compliance.shape[0],
             }
+            index_subtract2_dict = {
+                "TwoBodyShaftConstraint": (
+                    param.constraint_param.compliance.shape[0],
+                    0,
+                ),
+                "TwoBodyConstraint": (0,),
+                "OneBodyConstraint": (0,),
+                "GearConstraint": (param.constraint_param.compliance.shape[0],),
+            }
+            index_subtract2 = index_subtract2_dict[identifier]
 
             # Get the body indices (integers) from body names (strings)
             rb_names_ext = (
@@ -526,11 +542,15 @@ class Simulation:
                 *param.constraint_param.names,
                 *param.scalar_constraint_param.names,
             )
-            constraint_ids = jnp.array(
-                [
-                    constraint_names_ext.index(constraint.name)
-                    for constraint in constraint_group
-                ]
+            constraint_ids = tuple(
+                jnp.array(
+                    [
+                        constraint_names_ext.index(constraint.names[i])
+                        - index_subtract2[i]
+                        for constraint in constraint_group
+                    ]
+                )
+                for i in range(n_constraint_param_objects[identifier])
             )
             # Stack constraint types as a jnp.array
             constraint_types = jnp.array(

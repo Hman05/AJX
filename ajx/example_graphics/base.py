@@ -283,6 +283,8 @@ class GraphicalEnvironmentBase(DirectObject):
             ",": False,
             "n": False,
             "y": False,
+            "6": False,
+            "7": False,
         }
         self.game.setStepFunction(self.update)
 
@@ -328,6 +330,10 @@ class GraphicalEnvironmentBase(DirectObject):
         self.accept("n-up", update_key_map, ["n", False])
         self.accept("y", update_key_map, ["y", True])
         self.accept("y-up", update_key_map, ["y", False])
+        self.accept("6", update_key_map, ["6", True])
+        self.accept("6-up", update_key_map, ["6", False])
+        self.accept("7", update_key_map, ["7", True])
+        self.accept("7-up", update_key_map, ["7", False])
 
     def reset(self):
         if self.replay_active:

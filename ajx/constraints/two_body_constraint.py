@@ -49,6 +49,10 @@ class TwoBodyConstraint(Constraint):
     def bodies(self):
         return (self.body_a, self.body_b)
 
+    @property
+    def names(self):
+        return (self.name,)
+
     def __init__(
         self, name: str, body_a: str, body_b: str, constraint_type: ConstraintType
     ):
@@ -82,12 +86,13 @@ class TwoBodyConstraint(Constraint):
         param: SimulationParameters,
         state: State,
         body_ids: Tuple[Union[int, jax.Array]],
-        constraint_id: Union[int, jax.Array],
+        constraint_ids: Tuple[Union[int, jax.Array]],
         constraint_type: Union[ConstraintType, jax.Array],
     ) -> jax.Array:
         """
         C
         """
+        constraint_id = constraint_ids[0]
         body_a_id, body_b_id = body_ids
         body_b_pos = state.conf.pos[body_b_id]
         body_b_rot = state.conf.rot[body_b_id]
@@ -150,9 +155,10 @@ class TwoBodyConstraint(Constraint):
         param: SimulationParameters,
         state: State,
         body_ids: Tuple[Union[int, jax.Array]],
-        constraint_id: Union[int, jax.Array],
+        constraint_ids: Tuple[Union[int, jax.Array]],
         constraint_type: Union[ConstraintType, jax.Array],
     ) -> jax.Array:
+        constraint_id = constraint_ids[0]
         body_a_id, body_b_id = body_ids
         body_b_pos = state.conf.pos[body_b_id]
         body_b_rot = state.conf.rot[body_b_id]

@@ -28,6 +28,10 @@ class OneBodyConstraint(Constraint):
     body: str
     constraint_type: ConstraintType
 
+    @property
+    def parent_constraint(self):
+        return self.name
+
     def get_num_bodies():
         return 1
 
@@ -42,6 +46,10 @@ class OneBodyConstraint(Constraint):
     @property
     def bodies(self):
         return (self.body,)
+
+    @property
+    def names(self):
+        return (self.name,)
 
     # def __init__(self, name: str, body: str, constraint_type: ConstraintType):
     #     self.name = name
@@ -72,13 +80,14 @@ class OneBodyConstraint(Constraint):
         param: SimulationParameters,
         state: State,
         body_ids: Tuple[Union[int, jax.Array]],
-        constraint_id: Union[int, jax.Array],
+        constraint_ids: Tuple[Union[int, jax.Array]],
         constraint_type: Union[ConstraintType, jax.Array],
     ) -> jax.Array:
         """
         C
         """
         body_id = body_ids[0]
+        constraint_id = constraint_ids[0]
         body_b_pos = state.conf.pos[body_id]
         body_b_rot = state.conf.rot[body_id]
         body_a_pos = jnp.array([0.0, 0.0, 0.0])
@@ -152,10 +161,11 @@ class OneBodyConstraint(Constraint):
         param: SimulationParameters,
         state: State,
         body_ids: Tuple[Union[int, jax.Array]],
-        constraint_id: Union[int, jax.Array],
+        constraint_ids: Tuple[Union[int, jax.Array]],
         constraint_type: Union[ConstraintType, jax.Array],
     ) -> jax.Array:
         body_id = body_ids[0]
+        constraint_id = constraint_ids[0]
         body_b_pos = state.conf.pos[body_id]
         body_b_rot = state.conf.rot[body_id]
         body_a_pos = jnp.array([0.0, 0.0, 0.0])

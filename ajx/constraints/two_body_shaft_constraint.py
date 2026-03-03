@@ -11,6 +11,7 @@ from ajx.param import SimulationParameters
 from typing import Union, Tuple
 from functools import partial
 from ajx.constraints.base import Constraint, ConstraintType, get_frame_transform
+from ajx.constraints import TwoBodyConstraint
 
 
 @jit
@@ -28,7 +29,7 @@ def get_frame_transform(frame, constraint_id, body_pos, body_rotation):
 
 class TwoBodyShaftConstraint(Constraint):
     """
-    A constraint that restricts the relative motion between two bodies.
+    A constraint that restricts the relative motion between two bodies and a shaft.
 
     Constraint types currently supported:
      - Hinge
@@ -39,9 +40,10 @@ class TwoBodyShaftConstraint(Constraint):
     body_a: str
     body_b: str
     shaft: str
+    parent_constraint: str
     constraint_type: ConstraintType
     is_attached_to_world: bool = False
-    dof: int = 6
+    dof: int = 1
 
     def get_num_bodies():
         return 3
@@ -50,19 +52,22 @@ class TwoBodyShaftConstraint(Constraint):
     def bodies(self):
         return (self.body_a, self.body_b, self.shaft)
 
+    @property
+    def names(self):
+        return (self.name, self.parent_constraint)
+
     def __init__(
         self,
         name: str,
-        body_a: str,
-        body_b: str,
+        parent_constraint: TwoBodyConstraint,
         shaft: str,
-        constraint_type: ConstraintType,
     ):
         self.name = name
-        self.body_a = body_a
-        self.body_b = body_b
+        self.body_a = parent_constraint.body_a
+        self.body_b = parent_constraint.body_b
+        self.parent_constraint = parent_constraint.name
         self.shaft = shaft
-        self.constraint_type = constraint_type
+        self.constraint_type = parent_constraint.constraint_type
 
     def get_multiplier_names(self) -> Tuple[str]:
         if self.constraint_type == ConstraintType.HINGE.value:
@@ -80,12 +85,15 @@ class TwoBodyShaftConstraint(Constraint):
         body_b_id = param.rigid_body_param.names.index(self.body_b)
         body_a_id = param.rigid_body_param.names.index(self.body_a)
         shaft_id = param.rigid_body_param.names.index(self.shaft)
-        constraint_id = param.constraint_param.names.index(self.name)
+        constraint_id = param.scalar_constraint_param.names.index(self.name)
+        parent_constraint_id = param.constraint_param.names.index(
+            self.parent_constraint
+        )
         return TwoBodyShaftConstraint.func(
             param,
             state,
             (body_a_id, body_b_id, shaft_id),
-            constraint_id,
+            (constraint_id, parent_constraint_id),
             self.constraint_type,
         )
 
@@ -94,12 +102,14 @@ class TwoBodyShaftConstraint(Constraint):
         param: SimulationParameters,
         state: State,
         body_ids: Tuple[Union[int, jax.Array]],
-        constraint_id: Union[int, jax.Array],
+        constraint_ids: Tuple[Union[int, jax.Array]],
         constraint_type: Union[ConstraintType, jax.Array],
     ) -> jax.Array:
         """
         C
         """
+        constraint_id = constraint_ids[0]
+        parent_constraint_id = constraint_ids[1]
         body_a_id, body_b_id, shaft_id = body_ids
         body_b_pos = state.conf.pos[body_b_id]
         body_b_rot = state.conf.rot[body_b_id]
@@ -108,11 +118,11 @@ class TwoBodyShaftConstraint(Constraint):
         shaft_conf = state.conf.scalar[shaft_id]
 
         d_a, u_a, v_a, w_a = get_frame_transform(
-            param.constraint_param.frame_a, constraint_id, body_a_pos, body_a_rot
+            param.constraint_param.frame_a, parent_constraint_id, body_a_pos, body_a_rot
         )
 
         d_b, u_b, v_b, w_b = get_frame_transform(
-            param.constraint_param.frame_b, constraint_id, body_b_pos, body_b_rot
+            param.constraint_param.frame_b, parent_constraint_id, body_b_pos, body_b_rot
         )
 
         r_a = body_a_pos + d_a
@@ -126,13 +136,13 @@ class TwoBodyShaftConstraint(Constraint):
         dot2_2 = jnp.dot(w_a, r_a - r_b)
 
         # TODO: Copy and paste code. Computations are done twice...
-        frame_a_pos0 = param.constraint_param.frame_a.position[constraint_id]
-        frame_a_rot0 = param.constraint_param.frame_a.rotation[constraint_id]
+        frame_a_pos0 = param.constraint_param.frame_a.position[parent_constraint_id]
+        frame_a_rot0 = param.constraint_param.frame_a.rotation[parent_constraint_id]
         frame_a_rot = math.quat_mul(body_a_rot, frame_a_rot0)
         d_a = math.rotate_vector(body_a_rot, frame_a_pos0)
 
-        frame_b_pos0 = param.constraint_param.frame_b.position[constraint_id]
-        frame_b_rot0 = param.constraint_param.frame_b.rotation[constraint_id]
+        frame_b_pos0 = param.constraint_param.frame_b.position[parent_constraint_id]
+        frame_b_rot0 = param.constraint_param.frame_b.rotation[parent_constraint_id]
         frame_b_rot = math.quat_mul(body_b_rot, frame_b_rot0)
         d_b = math.rotate_vector(body_b_rot, frame_b_pos0)
 
@@ -141,21 +151,22 @@ class TwoBodyShaftConstraint(Constraint):
         r_b = body_b_pos + d_b
         r_delta = r_a - r_b
         v_a = math.rotation_matrix(frame_a_rot)[:, 1]
-        free_prismatic = jnp.dot(v_a, r_delta) - shaft_conf
+        gear_ratio = param.scalar_constraint_param.gear_ratio[constraint_id]
+        free_prismatic = jnp.dot(v_a, r_delta) - gear_ratio * shaft_conf
 
         # For hinge
         frame_a_rot_inv = math.conjugate(frame_a_rot)
         delta_rotation = math.quat_mul(frame_a_rot_inv, frame_b_rot)
         axis_angle = math.to_rotation_vector(delta_rotation)
         axis = jnp.array([1.0, 0.0, 0.0])
-        free_hinge = -jnp.dot(axis_angle, axis) - shaft_conf
+        free_hinge = -jnp.dot(axis_angle, axis) - gear_ratio * shaft_conf
 
-        hinge_constraint = jnp.block(
-            [spherical, dot1_1[None], dot1_2[None], free_hinge[None]]
-        ) * (constraint_type == ConstraintType.HINGE.value)
-        prismatic_constraint = jnp.block(
-            [dot2_1, dot2_2, dot1_1, dot1_2, dot1_3, free_prismatic[None]]
-        ) * (constraint_type == ConstraintType.PRISMATIC.value)
+        hinge_constraint = jnp.block([free_hinge[None]]) * (
+            constraint_type == ConstraintType.HINGE.value
+        )
+        prismatic_constraint = jnp.block([free_prismatic[None]]) * (
+            constraint_type == ConstraintType.PRISMATIC.value
+        )
         return hinge_constraint + prismatic_constraint
 
     @jit
@@ -163,39 +174,28 @@ class TwoBodyShaftConstraint(Constraint):
         param: SimulationParameters,
         state: State,
         body_ids: Tuple[Union[int, jax.Array]],
-        constraint_id: Union[int, jax.Array],
+        constraint_ids: Tuple[Union[int, jax.Array]],
         constraint_type: Union[ConstraintType, jax.Array],
     ) -> jax.Array:
+        constraint_id = constraint_ids[0]
+        parent_constraint_id = constraint_ids[1]
         body_a_id, body_b_id, shaft_id = body_ids
         body_b_pos = state.conf.pos[body_b_id]
         body_b_rot = state.conf.rot[body_b_id]
         body_a_pos = state.conf.pos[body_a_id]
         body_a_rot = state.conf.rot[body_a_id]
-        shaft_conf = state.conf.scalar[shaft_id]
+        gear_ratio = param.scalar_constraint_param.gear_ratio[constraint_id]
 
         d_a, u_a, v_a, w_a = get_frame_transform(
-            param.constraint_param.frame_a, constraint_id, body_a_pos, body_a_rot
+            param.constraint_param.frame_a, parent_constraint_id, body_a_pos, body_a_rot
         )
         d_b, u_b, v_b, w_b = get_frame_transform(
-            param.constraint_param.frame_b, constraint_id, body_b_pos, body_b_rot
+            param.constraint_param.frame_b, parent_constraint_id, body_b_pos, body_b_rot
         )
 
         r_a = body_a_pos + d_a
         r_b = body_b_pos + d_b
 
-        spherical_a = jnp.block([jnp.eye(3), -math.skew(d_a)])
-        spherical_b = jnp.block([-jnp.eye(3), math.skew(d_b)])
-        dot1_1_a = jnp.block([jnp.zeros([1, 3]), jnp.cross(u_a, v_b)])
-        dot1_1_b = jnp.block([jnp.zeros([1, 3]), -jnp.cross(u_a, v_b)])
-        dot1_2_a = jnp.block([jnp.zeros([1, 3]), jnp.cross(u_a, w_b)])
-        dot1_2_b = jnp.block([jnp.zeros([1, 3]), -jnp.cross(u_a, w_b)])
-        dot1_3_a = jnp.block([jnp.zeros([1, 3]), jnp.cross(w_a, v_b)])
-        dot1_3_b = jnp.block([jnp.zeros([1, 3]), -jnp.cross(w_a, v_b)])
-
-        dot2_1_a = jnp.block([u_a[None], jnp.cross(u_a, r_a - r_b)])
-        dot2_1_b = jnp.block([-u_a[None], jnp.zeros([1, 3])])
-        dot2_2_a = jnp.block([w_a[None], jnp.cross(w_a, r_a - r_b)])
-        dot2_2_b = jnp.block([-w_a[None], jnp.zeros([1, 3])])
         dot2_3_a = jnp.block([v_a[None], jnp.cross(v_a, r_a - r_b)])
         dot2_3_b = jnp.block([-v_a[None], jnp.zeros([1, 3])])
         u_a_tangent_a = jnp.block([jnp.zeros([1, 3]), u_a])
@@ -203,127 +203,19 @@ class TwoBodyShaftConstraint(Constraint):
 
         jac_hinge = jnp.concatenate(
             [
-                jnp.concatenate([spherical_a, dot1_1_a, dot1_2_a, u_a_tangent_a]),
-                jnp.concatenate([spherical_b, dot1_1_b, dot1_2_b, u_a_tangent_b]),
-                jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, -1.0])[:, None],
+                jnp.concatenate([u_a_tangent_a]),
+                jnp.concatenate([u_a_tangent_b]),
+                jnp.array([-gear_ratio]),
             ],
             axis=None,
         ) * (constraint_type == 0)
         jac_prismatic = jnp.concatenate(
             [
-                jnp.concatenate(
-                    [dot2_1_a, dot2_2_a, dot1_1_a, dot1_2_a, dot1_3_a, dot2_3_a]
-                ),
-                jnp.concatenate(
-                    [dot2_1_b, dot2_2_b, dot1_1_b, dot1_2_b, dot1_3_b, dot2_3_b]
-                ),
-                jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, -1.0]),
+                jnp.concatenate([dot2_3_a]),
+                jnp.concatenate([dot2_3_b]),
+                jnp.array([-gear_ratio]),
             ],
             axis=None,
         ) * (constraint_type == 1)
 
         return jac_hinge + jac_prismatic
-
-    @partial(jit, static_argnums=0)
-    def get_free_degrees(
-        self,
-        state: State,
-        param: SimulationParameters,
-    ) -> jax.Array:
-        body_b_id = param.rigid_body_param.names.index(self.body_b)
-        body_a_id = param.rigid_body_param.names.index(self.body_a)
-        constraint_id = param.constraint_param.names.index(self.name)
-
-        body_b_pos = state.conf.pos[body_b_id]
-        body_b_rot = state.conf.rot[body_b_id]
-        body_a_pos = state.conf.pos[body_a_id]
-        body_a_rot = state.conf.rot[body_a_id]
-
-        frame_a_pos0 = param.constraint_param.frame_a.position[constraint_id]
-        frame_a_rot0 = param.constraint_param.frame_a.rotation[constraint_id]
-        frame_a_rot = math.quat_mul(body_a_rot, frame_a_rot0)
-        d_a = math.rotate_vector(body_a_rot, frame_a_pos0)
-
-        frame_b_pos0 = param.constraint_param.frame_b.position[constraint_id]
-        frame_b_rot0 = param.constraint_param.frame_b.rotation[constraint_id]
-        frame_b_rot = math.quat_mul(body_b_rot, frame_b_rot0)
-        d_b = math.rotate_vector(body_b_rot, frame_b_pos0)
-
-        # For prismatic
-        r_a = body_a_pos + d_a
-        r_b = body_b_pos + d_b
-        r_delta = r_a - r_b
-        v_a = math.rotation_matrix(frame_a_rot)[:, 1]
-        x = jnp.dot(v_a, r_delta)
-        free_prismatic = x * (self.constraint_type == 1)
-
-        # For hinge
-        frame_a_rot_inv = math.conjugate(frame_a_rot)
-        delta_rotation = math.quat_mul(frame_a_rot_inv, frame_b_rot)
-        axis_angle = math.to_rotation_vector(delta_rotation)
-        axis = jnp.array([1.0, 0.0, 0.0])
-        theta = jnp.dot(axis_angle, axis)
-        free_hinge = theta * (self.constraint_type == 0)
-        return free_hinge + free_prismatic
-
-    def place_other(
-        self, param: SimulationParameters, body_a_transform: Transform, x: float
-    ) -> Transform:
-        """
-        Returns the configuration of the next body within a kinematic tree containing this joint.
-
-        Parameters
-        ----------
-        param: Dict
-            The system's parameters stored as a jax pytree with a dictionary at the top level.
-        body_a_transform: Transform
-            The transform of the previous body/frame in the kinematic chain.
-        x: float
-            Value of the free degree displacement between the frames (Assumes prismatic or hinge).
-        Returns:
-        -------
-        Transform:
-            The transform of the next body.
-        """
-        i = param.constraint_param.names.index(self.name)
-        cp = param.constraint_param
-        d0_a = cp.frame_a.position[i]
-        frame_a_rot0 = cp.frame_a.rotation[i]
-        d_a = math.rotate_vector(body_a_transform.rot, d0_a)
-        frame_a_position = body_a_transform.pos + d_a
-        frame_a_rot = math.quat_mul(body_a_transform.rot, frame_a_rot0)
-        v_a = math.rotation_matrix(frame_a_rot)[:, 1]
-
-        # Hinge
-        frame_b_rot0 = cp.frame_b.rotation[i]
-        frame_b_rot_as_seen_from_a = math.quat_from_axis_angle(
-            jnp.array([1.0, 0.0, 0.0]), x
-        )
-        frame_b_rot = math.quat_mul(frame_a_rot, frame_b_rot_as_seen_from_a)
-        hinge_body_b_rotation = math.quat_mul(frame_b_rot, math.conjugate(frame_b_rot0))
-        d0_b = cp.frame_b.position[i]
-        d_b = math.rotate_vector(hinge_body_b_rotation, d0_b)
-        hinge_body_b_position = frame_a_position - d_b
-
-        # Prismatic
-        d_b = v_a * x
-        frame_b_pos = frame_a_position - d_b
-        frame_b_rot = frame_a_rot
-        frame_b_rot0 = cp.frame_b.rotation[i]
-        d0_b = cp.frame_b.position[i]
-        frame_b_rot0_inv = math.conjugate(frame_b_rot0)
-        prismatic_body_b_rotation = math.quat_mul(frame_b_rot, frame_b_rot0_inv)
-        prismatic_body_b_position = frame_b_pos - d_a
-
-        body_b_rotation = hinge_body_b_rotation * (
-            self.constraint_type == ConstraintType.HINGE.value
-        ) + prismatic_body_b_rotation * (
-            self.constraint_type == ConstraintType.PRISMATIC.value
-        )
-        body_b_position = hinge_body_b_position * (
-            self.constraint_type == ConstraintType.HINGE.value
-        ) + prismatic_body_b_position * (
-            self.constraint_type == ConstraintType.PRISMATIC.value
-        )
-
-        return Transform(body_b_position, body_b_rotation)
