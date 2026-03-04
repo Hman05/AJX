@@ -48,14 +48,17 @@ class Configuration(ParameterNode):
             "Use vmap for batched inputs."
         )
         n_bodies = self.pos.shape[0]
-        update = update.reshape(n_bodies, 6)
-        delta_pos = update[:, :3]
-        delta_rot = update[:, 3:]
+        bodies_size = n_bodies * 6
+        body_update = update[:bodies_size].reshape(n_bodies, 6)
+        delta_pos = body_update[:, :3]
+        delta_rot = body_update[:, 3:]
+        delta_scalar = update[bodies_size:]
         quaternion_delta = vmap(math.from_rotation_vector)(delta_rot)
         new_pos = self.pos + delta_pos
+        new_scalar = self.scalar + delta_scalar
         new_rot = vmap(math.quat_mul)(quaternion_delta, self.rot)
         new_rot = vmap(math.normalize)(new_rot)
-        return Configuration(new_pos, new_rot)
+        return Configuration(new_pos, new_rot, new_scalar)
 
     def tangent_size(self):
         assert len(self.pos.shape) == len(self.rot.shape)
@@ -65,7 +68,8 @@ class Configuration(ParameterNode):
             return 6 * n_timesteps * n_bodies
         elif len(self.pos.shape) == 2:
             n_bodies = self.pos.shape[0]
-            return 6 * n_bodies
+            n_scalar_bodies = self.scalar.shape[0]
+            return 6 * n_bodies + n_scalar_bodies
         raise Exception
 
     def log_map(self, other: Configuration):
