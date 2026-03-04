@@ -43,10 +43,26 @@ class TwoBodyShaftConstraint(Constraint):
     parent_constraint: str
     constraint_type: ConstraintType
     is_attached_to_world: bool = False
-    dof: int = 1
 
-    def get_num_bodies():
+    @classmethod
+    def get_num_bodies(cls):
         return 3
+
+    def get_operand_sizes():
+        return (6, 6, 1)
+
+    @classmethod
+    def get_constrained_degrees(cls):
+        return 1
+
+    def get_parameter_group_names():
+        return ("scalar_constraint_param", "constraint_param")
+
+    def get_body_group_names():
+        return ("rigid_body_param", "rigid_body_param", "scalar_body_param")
+
+    def get_gvel_names():
+        return ("data", "data", "scalar")
 
     @property
     def bodies(self):

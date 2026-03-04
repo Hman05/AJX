@@ -28,20 +28,25 @@ class OneBodyConstraint(Constraint):
     body: str
     constraint_type: ConstraintType
 
-    @property
-    def parent_constraint(self):
-        return self.name
-
-    def get_num_bodies():
+    @classmethod
+    def get_num_bodies(cls):
         return 1
 
-    @property
-    def is_attached_to_world(self):
-        return True
+    def get_operand_sizes():
+        return (6,)
 
-    @property
-    def dof(self):
+    @classmethod
+    def get_constrained_degrees(cls):
         return 6
+
+    def get_parameter_group_names():
+        return ("constraint_param",)
+
+    def get_body_group_names():
+        return ("rigid_body_param",)
+
+    def get_gvel_names():
+        return ("data",)
 
     @property
     def bodies(self):

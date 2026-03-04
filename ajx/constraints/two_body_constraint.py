@@ -39,11 +39,27 @@ class TwoBodyConstraint(Constraint):
     body_a: str
     body_b: str
     constraint_type: ConstraintType
-    dof: int = 6
     is_attached_to_world: bool = False
 
-    def get_num_bodies():
+    @classmethod
+    def get_num_bodies(cls):
         return 2
+
+    def get_operand_sizes():
+        return (6, 6)
+
+    @classmethod
+    def get_constrained_degrees(cls):
+        return 6
+
+    def get_parameter_group_names():
+        return ("constraint_param",)
+
+    def get_body_group_names():
+        return ("rigid_body_param", "rigid_body_param")
+
+    def get_gvel_names():
+        return ("data", "data")
 
     @property
     def bodies(self):

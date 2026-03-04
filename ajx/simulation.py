@@ -25,6 +25,7 @@ from loguru import logger
 from ajx.block_sparse.csc_ldlt import ldlt_solve
 from ajx.block_sparse.vbc_matrix import VBCMatrix
 from ajx.block_sparse.vbr_matrix import VBRMatrix
+from ajx.block_sparse.svbd_matrix import SVBDMatrix
 from ajx.param import SimulationParameters
 from ajx.definitions import RigidBodyParameters, ScalarBodyParameters
 
@@ -232,16 +233,15 @@ class Simulation:
             state, param = component.update_params(state, action, param)
 
         f_ext = self._gravity_gyro_force3D(state, param)
-        M_stacked, _, G, Sigma_data, b_data = self._assemble_blocks(state, param)
+        M, _, G, Sigma_data, b_data = self._assemble_blocks(state, param)
         G_dense = G.to_scalar_matrix()
         # M = jax.scipy.linalg.block_diag(*M_stacked)
 
         # lbda = 1 / Sigma_data * (b_data - G.mul_vector(qdot_target.data.flatten()))
         lbda = 1 / Sigma_data * (b_data - G_dense @ gvel_target.data.flatten())
 
-        M_vdelta = jax.vmap(jnp.matmul)(
-            M_stacked, gvel_target.data - state.gvel.data
-        ).flatten()
+        M_vdelta = M.mul_vector(gvel_target.data - state.gvel.data)
+
         # p_ext = M_vdelta - G.vector_mul(lbda)
         p_ext = M_vdelta - G_dense.T @ lbda
 
@@ -327,46 +327,30 @@ class Simulation:
         logger.trace("Tracing force_solver")
         gvel = state.gvel.flatten()
 
-        M_stacked, M_inv_stacked, G, Sigma_data, b_data = self._assemble_blocks(
-            state, param
-        )
+        M_stacked, M_inv, G, Sigma_data, b_data = self._assemble_blocks(state, param)
         n_rb_dof = 6 * state.gvel.data.shape[0]
 
         if self.settings.solver == Solver.SPARSE_LINEAR:
-            S_sparse, rhs, M_inv_f, rsi_dict = self._assemble_schur(
-                G,
-                M_inv_stacked.flatten(),
-                Sigma_data,
-                f_ext.flatten(),
-                gvel,
-                b_data,
-                lower=True,
-            )
+            S_sparse, rsi_dict = self._schur_reduction(G, M_inv, Sigma_data)
+            M_inv_f = M_inv.mul_vector(f_ext)
+
+            M_inv_a = gvel - self.h * M_inv_f
+            rhs = b_data - G.mul_vector(M_inv_a)
             rsi_list = tuple(rsi_dict.values())
 
             lbda = ldlt_solve(S_sparse, rsi_list, rhs)
             GTlbda = G.vector_mul(lbda)
         elif self.settings.solver == Solver.DENSE_LINEAR:
-            M_inv = jax.scipy.linalg.block_diag(*M_inv_stacked[0], *M_inv_stacked[1])
+            M_inv_dense = M_inv.to_scalar_matrix()
             G_dense = G.to_scalar_matrix()
-            S = G_dense @ M_inv @ G_dense.T + jnp.diag(Sigma_data)
-            M_inv_f = M_inv @ f_ext.flatten()
+            S = G_dense @ M_inv_dense @ G_dense.T + jnp.diag(Sigma_data)
+            M_inv_f = M_inv_dense @ f_ext.flatten()
             rhs = b_data - G_dense @ gvel - self.h * G_dense @ M_inv_f
             lbda = jax.scipy.linalg.solve(S, rhs)
             GTlbda = G_dense.T @ lbda
         else:
             raise NotImplementedError
-        GTlbda6dof = GTlbda[:n_rb_dof]
-        GTlbda1dof = GTlbda[n_rb_dof:]
-        constraint_imp_6dof = jax.vmap(jnp.matmul)(
-            M_inv_stacked[0], GTlbda6dof.reshape(-1, 6)
-        )
-        constraint_imp_scalar = jax.vmap(jnp.matmul)(
-            M_inv_stacked[1], GTlbda1dof.reshape(-1, 1)
-        )
-        constraint_imp = jnp.concatenate(
-            [constraint_imp_6dof.flatten(), constraint_imp_scalar.flatten()]
-        )
+        constraint_imp = M_inv.mul_vector(GTlbda)
         qdot_next = state.gvel.flatten() + constraint_imp + self.h * M_inv_f
         code = 0
         gvel_next = GeneralizedVelocity(
@@ -377,7 +361,7 @@ class Simulation:
     @partial(jit, static_argnums=0)
     def _assemble_mass_matrix(
         self, state: State, param: SimulationParameters
-    ) -> Tuple[jax.Array, jax.Array]:
+    ) -> SVBDMatrix:
         def assemble_mass_block(
             rb_param: RigidBodyParameters, rot: jax.Array
         ) -> Tuple[jax.Array, jax.Array]:
@@ -398,14 +382,20 @@ class Simulation:
         )
         M_scalar = param.scalar_body_param.inertia[:, None, None]
         M_scalar_inv = 1 / param.scalar_body_param.inertia[:, None, None]
-        return (M_stack, M_scalar), (M_inv_stack, M_scalar_inv)
+        M_data = jnp.concatenate([M_stack, M_scalar], axis=None)
+        M_data_inv = jnp.concatenate([M_inv_stack, M_scalar_inv], axis=None)
+        block_sizes = np.array(
+            [(6, state.conf.rot.shape[0]), (1, state.conf.scalar.shape[0])]
+        )
+
+        return (SVBDMatrix(M_data, block_sizes), SVBDMatrix(M_data_inv, block_sizes))
 
     @partial(jit, static_argnums=0)
     def _assemble_blocks(
         self,
         state: State,
         param: SimulationParameters,
-    ) -> Tuple[jax.Array, jax.Array, VBRMatrix, jax.Array, jax.Array]:
+    ) -> Tuple[SVBDMatrix, SVBDMatrix, VBRMatrix, jax.Array, jax.Array]:
         """
         Assemble the blocks in the saddle point system
 
@@ -417,23 +407,42 @@ class Simulation:
         """
         # Sort constraint_list into multiple lists where the number of dofs are the same
         # Group constraints based on their structure. If consecutive constraints have the same structure, they are grouped.
-        # Constraint groups are evaluated in parallel. Note
+        # Constraint groups are evaluated in parallel.
+        # The list consists of 4-tuples with Constraint, first_index, and constraint_group.
+        # Constraint - The constraint class
+        # first_index - The index of the first entry of the group inside the original constraint_list
+        # first_pg_id - The index of the first entry of the group inside the parameter group
+        # constraint_group - A list of copies of the individual constraint
         constraint_group_list = []
         group = []
         first_id = 0
+        first_pg_id = 0
+        constraint_parameter_group_counter = {}
         previous_identifier = None
         for i, constraint in enumerate(self.constraint_list):
             # To be expanded
-            identifier = constraint.__class__.__name__
+            identifier = constraint.__class__
+            parameter_group_name = identifier.get_parameter_group_names()[0]
             if not identifier == previous_identifier:
                 if previous_identifier:
-                    constraint_group_list.append((previous_identifier, first_id, group))
+                    constraint_group_list.append(
+                        (previous_identifier, first_id, first_pg_id, group)
+                    )
                 group = []
                 first_id = i
+                first_pg_id = constraint_parameter_group_counter.get(
+                    parameter_group_name, 0
+                )
+                parameter_group_name = identifier.get_parameter_group_names()[0]
+
             group.append((constraint))
             previous_identifier = identifier
+            # Counter for each group
+            constraint_parameter_group_counter[parameter_group_name] = (
+                constraint_parameter_group_counter.get(parameter_group_name, 0) + 1
+            )
         if self.constraint_list:
-            constraint_group_list.append((identifier, first_id, group))
+            constraint_group_list.append((identifier, first_id, first_pg_id, group))
 
         # Use constraint graph to compute sparsity information
         (
@@ -460,112 +469,68 @@ class Simulation:
         # Assemble mass matrices
         M, M_inv = self._assemble_mass_matrix(state, param)
 
-        # Loop over each constraint group. If the number of groups are kept low, the
+        # Loop over each constraint group. If the number of groups is kept low, the
         # fact that a regular for-loop is used should not matter much
-        for identifier, first_index, constraint_group in constraint_group_list:
-            # These dicts are required if we want to replace the for-loop above with a jax.lax loop
-            n_bodies = {
-                "TwoBodyShaftConstraint": TwoBodyShaftConstraint.get_num_bodies(),
-                "TwoBodyConstraint": TwoBodyConstraint.get_num_bodies(),
-                "OneBodyConstraint": OneBodyConstraint.get_num_bodies(),
-                "GearConstraint": GearConstraint.get_num_bodies(),
-            }
-            n_constraint_param_objects = {
-                "TwoBodyShaftConstraint": 2,
-                "TwoBodyConstraint": 1,
-                "OneBodyConstraint": 1,
-                "GearConstraint": 1,
-            }
-            c_func = {
-                "TwoBodyShaftConstraint": TwoBodyShaftConstraint.func,
-                "TwoBodyConstraint": TwoBodyConstraint.func,
-                "OneBodyConstraint": OneBodyConstraint.func,
-                "GearConstraint": GearConstraint.func,
-            }
-            jac_func = {
-                "TwoBodyShaftConstraint": TwoBodyShaftConstraint.jacobian,
-                "TwoBodyConstraint": TwoBodyConstraint.jacobian,
-                "OneBodyConstraint": OneBodyConstraint.jacobian,
-                "GearConstraint": GearConstraint.jacobian,
-            }
-            operand_shapes = {
-                "TwoBodyShaftConstraint": (6, 6, 1),
-                "TwoBodyConstraint": (6, 6),
-                "OneBodyConstraint": (6,),
-                "GearConstraint": (1,),
-            }
-            constrained_degrees = {
-                "TwoBodyShaftConstraint": 1,
-                "TwoBodyConstraint": 6,
-                "OneBodyConstraint": 6,
-                "GearConstraint": 1,
-            }
-            constraint_param_dict = {
-                "TwoBodyShaftConstraint": param.scalar_constraint_param,
-                "TwoBodyConstraint": param.constraint_param,
-                "OneBodyConstraint": param.constraint_param,
-                "GearConstraint": param.scalar_constraint_param,
-            }
-            index_subtract = {
-                "TwoBodyShaftConstraint": param.constraint_param.compliance.shape[0],
-                "TwoBodyConstraint": 0,
-                "OneBodyConstraint": 0,
-                "GearConstraint": param.constraint_param.compliance.shape[0],
-            }
-            index_subtract2_dict = {
-                "TwoBodyShaftConstraint": (
-                    param.constraint_param.compliance.shape[0],
-                    0,
-                ),
-                "TwoBodyConstraint": (0,),
-                "OneBodyConstraint": (0,),
-                "GearConstraint": (param.constraint_param.compliance.shape[0],),
-            }
-            index_subtract2 = index_subtract2_dict[identifier]
-
+        # The steps are:
+        # 1. (Only during compilation) Convert names (strings) to indices
+        # 1.5. (Only during compilation) Stack constraint types
+        # 2. Compute Jacobians and offsets
+        # 3. Update G_data (full sparse constraint Jacobian)
+        # 4. Compute regularization and rhs
+        # 5. Update Sigma_data and b_data (full regularization and full rhs)
+        for (
+            Constraint,
+            first_index,
+            first_pg_index,
+            constraint_group,
+        ) in constraint_group_list:
             # Get the body indices (integers) from body names (strings)
-            rb_names_ext = (
-                *param.rigid_body_param.names,
-                *param.scalar_body_param.names,
-            )
+
+            # Depending on the type of constrained bodies, different sets of parameters are needed
+            body_params = [
+                param.get_value_at_path(path)
+                for path in Constraint.get_body_group_names()
+            ]
             body_ids = tuple(
                 jnp.array(
                     [
-                        rb_names_ext.index(constraint.bodies[i])
+                        body_param.names.index(constraint.bodies[i])
                         for constraint in constraint_group
                     ]
                 )
-                for i in range(n_bodies[identifier])
+                for i, body_param in enumerate(body_params)
             )
-            # Get the constraint indices (integers) from constraint names (strings)
-            constraint_names_ext = (
-                *param.constraint_param.names,
-                *param.scalar_constraint_param.names,
-            )
+
+            # Depending on the number of constrained degrees, different sets of constraint parameters are needed
+            constraint_params = [
+                param.get_value_at_path(path)
+                for path in Constraint.get_parameter_group_names()
+            ]
+            # Get the constraint indices (integers) from constraint names (strings). The constraint indices might belong to different parameter groups
             constraint_ids = tuple(
                 jnp.array(
                     [
-                        constraint_names_ext.index(constraint.names[i])
-                        - index_subtract2[i]
+                        constraint_param.names.index(constraint.names[i])
                         for constraint in constraint_group
                     ]
                 )
-                for i in range(n_constraint_param_objects[identifier])
+                for i, constraint_param in enumerate(constraint_params)
             )
+
             # Stack constraint types as a jnp.array
             constraint_types = jnp.array(
                 [constraint.constraint_type for constraint in constraint_group]
             )
 
             # Compute Jacobians and constraint offsets
-            G_blocks = jax.vmap(jac_func[identifier], (None, None, 0, 0, 0))(
+            G_blocks = jax.vmap(Constraint.jacobian, (None, None, 0, 0, 0))(
                 param,
                 state,
                 body_ids,
                 constraint_ids,
                 constraint_types,
             )
-            default_offsets = jax.vmap(c_func[identifier], (None, None, 0, 0, 0))(
+            default_offsets = jax.vmap(Constraint.func, (None, None, 0, 0, 0))(
                 param,
                 state,
                 body_ids,
@@ -582,12 +547,11 @@ class Simulation:
 
             # Get the index slice corresponding to this constraint group
             # This slice is used to constraint parameters
-            first_index = first_index - index_subtract[identifier]
             group_size = len(constraint_group)
-            idx_slice = slice(first_index, first_index + group_size)
+            idx_slice = slice(first_pg_index, first_pg_index + group_size)
 
             # Get the constraint parameters
-            constraint_param = constraint_param_dict[identifier]
+            constraint_param = constraint_params[0]
             tau = constraint_param.damping[idx_slice]
             epsilon = constraint_param.compliance[idx_slice]
             target = constraint_param.target[idx_slice]
@@ -608,7 +572,7 @@ class Simulation:
 
             # Copy regularization of this constraint group to the full regularization vector
             row_slice_end = (
-                row_slice_begin + constrained_degrees[identifier] * group_size
+                row_slice_begin + Constraint.get_constrained_degrees() * group_size
             )
             Sigma_data = Sigma_data.at[row_slice_begin:row_slice_end].set(
                 regularization.flatten()
@@ -618,35 +582,27 @@ class Simulation:
             # proj_vel = G @ u = G1 @ u + G2 @ u + ... = [G1x ux G1z uz].T +
             jnp_body_ids = jnp.stack(body_ids, axis=1)
 
-            def stack_multiply(G_blocks, body_ids, gvel, gscalar):
-                dims = operand_shapes[identifier]
-                sizes = (
-                    jnp.concatenate(
-                        [
-                            jnp.ones([gvel.shape[0]], dtype=jnp.int64) * 6,
-                            jnp.ones([gscalar.shape[0]], dtype=jnp.int64),
-                        ]
-                    )
-                    - 6
-                )
-                offsets = jnp.cumulative_sum(sizes, include_initial=True)
-                gflat = jnp.concatenate([gvel.flatten(), gscalar])
+            # TODO: Create better abstraction for G @ v
+            def stack_multiply(G_blocks, body_ids, gvel: GeneralizedVelocity):
+                dims = Constraint.get_operand_sizes()
+                gvel_names = Constraint.get_gvel_names()
+                cd = Constraint.get_constrained_degrees()
+
                 offset = 0
                 results = []
-                for i, dim in enumerate(dims):
-                    cd = constrained_degrees[identifier]
+                for dim, gvel_name in zip(dims, gvel_names):
                     G = G_blocks[offset * cd : (offset + dim) * cd].reshape(cd, dim)
+                    offset += dim
 
                     body_id = body_ids[i]
-                    vel_begin = offsets[body_id]
-                    vel_dim = operand_shapes[identifier][i]
-                    vel = jax.lax.dynamic_slice(gflat, (vel_begin,), (vel_dim,))
-                    results.append(G @ vel)
+                    body_gvel = gvel.get_value_at_path(gvel_name)[body_id].flatten()
+
+                    results.append(G @ body_gvel)
 
                 return jnp.stack(results)
 
-            proj_vels = jax.vmap(stack_multiply, in_axes=(0, 0, None, None))(
-                G_blocks, jnp_body_ids, state.gvel.data, state.gvel.scalar
+            proj_vels = jax.vmap(stack_multiply, in_axes=(0, 0, None))(
+                G_blocks, jnp_body_ids, state.gvel
             )
             proj_vel = jnp.sum(proj_vels, axis=1)
 
@@ -655,21 +611,18 @@ class Simulation:
             rhs_velocity = target
             rhs = rhs_holonomic * is_locked + rhs_velocity * not_locked
 
-            # Copy rhs of this constraint group to the full rhs vector
+            # Copy rhs of this constraint group to the full prhs vector
             b_data = b_data.at[row_slice_begin:row_slice_end].set(rhs.flatten())
 
         G = VBRMatrix(G_data, G_col_indices, G_row_ptr, G_row_sizes, G_col_sizes)
 
         return M, M_inv, G, Sigma_data, b_data
 
-    def _assemble_schur(
+    def _schur_reduction(
         self,
-        G,
-        M_inv,
-        Sigma_data,
-        f_ext,
-        gvel,
-        b_data,
+        G: VBRMatrix,
+        M_inv,  # Variable block diagonal
+        Sigma_data,  # Variable block diagonal
         lower=True,
     ):
         """Form S = G @ M_inv @ G.T + Sigma as a VBCMatrix"""
@@ -688,10 +641,13 @@ class Simulation:
 
         # Want to form S = G @ M_inv @ G.T + Sigma
         # Result is formed by "M_inv weighted block-dot products" of combinations of rows of G
+        # The question is how to take block-dot products of sparse rows...
 
         slice_begin1 = 0
         sigma_slice_begin = 0
         for i in range(len(G.row_ptr) - 1):
+            # First loop over rows
+            # Want to find the column indices (cols1) and the correct slice of data (data1)
             r1_slice = (G.row_ptr[i], G.row_ptr[i + 1])
             cols1 = G.col_indices[r1_slice[0] : r1_slice[1]]
             slice_end1 = slice_begin1 + sum(
@@ -701,6 +657,8 @@ class Simulation:
             slice_begin2 = 0
             sigma_slice_end = sigma_slice_begin + block_sizes[i]
             for j in range(len(G.row_ptr) - 1):
+                # Second loop over rows
+                # Want to find the column indices (cols2) and the correct slice of data (data2)
                 r2_slice = (G.row_ptr[j], G.row_ptr[j + 1])
                 cols2 = G.col_indices[r2_slice[0] : r2_slice[1]]
                 slice_end2 = slice_begin2 + sum(
@@ -713,7 +671,7 @@ class Simulation:
                         data1,
                         cols2,
                         data2,
-                        M_inv,
+                        M_inv.data,
                         G.row_sizes[i],
                         G.row_sizes[j],
                         G.col_sizes,
@@ -735,23 +693,7 @@ class Simulation:
             slice_begin1 = slice_end1
         S = VBCMatrix(S_data, row_indices, col_ptr, block_sizes, block_sizes)
 
-        M_inv_slice_begin = 0
-        f_slice_begin = 0
-        M_inv_f = jnp.zeros_like(f_ext)
-        body_sizes = np.ones([len(self.rigid_body_list)], dtype=int) * 6
-        for i, size in enumerate(body_sizes):
-            M_inv_slice_end = M_inv_slice_begin + size**2
-            f_slice_end = f_slice_begin + size
-            M_inv_block = M_inv[M_inv_slice_begin:M_inv_slice_end].reshape(size, size)
-            f_block = f_ext[f_slice_begin:f_slice_end]
-            result_flat = (M_inv_block @ f_block).flatten()
-            M_inv_f = M_inv_f.at[f_slice_begin:f_slice_end].set(result_flat)
-            M_inv_slice_begin = M_inv_slice_begin
-            f_slice_begin = f_slice_end
-
-        M_inv_a = gvel - self.h * M_inv_f
-        b_star = b_data - G.mul_vector(M_inv_a)
-        return S, b_star, M_inv_f, rsi_dict
+        return S, rsi_dict
 
 
 import numpy as np
@@ -767,12 +709,19 @@ def _bdot_over_intersection(
     row_size2,
     col_sizes,
 ):
+    """
+    Compute A @ C @ B.T where
+    - A is of shape row_size1*N
+    - B is of shape row_size1*N
+    - C is of shape N*N
+    - A is stored in single-block variable block row (VBR) format:
+        -- a_indices: Th
+    """
     res = jnp.zeros([row_size1, row_size2])
     intersection_empty = True
     m = len(a_indices)
     n = len(b_indices)
-    slices_begin3 = np.cumsum(np.array(col_sizes) ** 2) - col_sizes[0] ** 2
-    slices_end3 = np.cumsum(np.array(col_sizes) ** 2)
+    slices3 = np.cumulative_sum(np.array(col_sizes) ** 2, include_initial=True)
 
     slice_begin1 = 0
     slice_begin2 = 0
@@ -783,8 +732,8 @@ def _bdot_over_intersection(
 
         if a_indices[i] == b_indices[j]:
             reduce_size = col_sizes[a_indices[i]]
-            slice_begin3 = slices_begin3[a_indices[i]]
-            slice_end3 = slices_end3[a_indices[i]]
+            slice_begin3 = slices3[a_indices[i]]
+            slice_end3 = slices3[a_indices[i] + 1]
             A = a_values[slice_begin1:slice_end1].reshape(row_size1, reduce_size)
             B = b_values[slice_begin2:slice_end2].reshape(row_size2, reduce_size)
             C = c_values[slice_begin3:slice_end3].reshape(reduce_size, reduce_size)

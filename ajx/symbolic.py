@@ -32,7 +32,7 @@ def get_schur_fillin_sparsity(constraint_list: Tuple[Constraint], lower: bool = 
             child[l].append(j)
 
     # Pre-Step 3: Construct sparsity pattern for S
-    block_sizes = [c.dof for c in constraint_list]
+    block_sizes = [c.get_constrained_degrees() for c in constraint_list]
     entries_list = []
     rsi_dict = {}
     row_indices = []
@@ -79,7 +79,7 @@ def get_constraint_sparsity(
     nb = len(rigid_body_list)
     nsb = len(scalar_body_list)
     # Pre-Step 4: Compute reduction scattering indexation and allocate data for G
-    row_sizes = np.array([c.dof for c in constraint_list])
+    row_sizes = np.array([c.get_constrained_degrees() for c in constraint_list])
     col_sizes_rb = np.ones(nb, dtype=int) * 6
     col_sizes_sb = np.ones(nsb, dtype=int) * 1
     col_sizes = np.concatenate([col_sizes_rb, col_sizes_sb])
