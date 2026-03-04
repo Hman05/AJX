@@ -84,6 +84,20 @@ class TwoBodyConstraint(Constraint):
             return ("nu", "nw", "n_bend1", "n_torsion", "n_bend2", "t")
         return ()
 
+    def compute_offset(
+        default_offset: jax.Array, target: jax.Array, constraint_type: ConstraintType
+    ):
+        linear_offset = default_offset - target
+        roational_offset = (linear_offset + jnp.pi) % (2 * jnp.pi) - jnp.pi
+
+        hinge_offset = roational_offset * (
+            constraint_type == ConstraintType.HINGE.value
+        )
+        prismatic_offset = linear_offset * (
+            constraint_type == ConstraintType.PRISMATIC.value
+        )
+        return hinge_offset + prismatic_offset
+
     @partial(jit, static_argnums=0)
     def func(
         self,
@@ -156,7 +170,7 @@ class TwoBodyConstraint(Constraint):
         delta_rotation = math.quat_mul(frame_a_rot_inv, frame_b_rot)
         axis_angle = math.to_rotation_vector(delta_rotation)
         axis = jnp.array([1.0, 0.0, 0.0])
-        free_hinge = -jnp.dot(axis_angle, axis)
+        free_hinge = jnp.dot(axis_angle, axis)
 
         hinge_constraint = jnp.block(
             [spherical, dot1_1[None], dot1_2[None], free_hinge[None]]
@@ -206,8 +220,8 @@ class TwoBodyConstraint(Constraint):
         dot2_2_b = jnp.block([-w_a[None], jnp.zeros([1, 3])])
         dot2_3_a = jnp.block([v_a[None], jnp.cross(v_a, r_a - r_b)])
         dot2_3_b = jnp.block([-v_a[None], jnp.zeros([1, 3])])
-        u_a_tangent_a = jnp.block([jnp.zeros([1, 3]), u_a])
-        u_a_tangent_b = jnp.block([jnp.zeros([1, 3]), -u_a])
+        u_a_tangent_a = -jnp.block([jnp.zeros([1, 3]), u_a])
+        u_a_tangent_b = -jnp.block([jnp.zeros([1, 3]), -u_a])
 
         jac_hinge = jnp.concatenate(
             [

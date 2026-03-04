@@ -92,6 +92,20 @@ class TwoBodyShaftConstraint(Constraint):
             return ("nu", "nw", "n_bend1", "n_torsion", "n_bend2", "t")
         return ()
 
+    def compute_offset(
+        default_offset: jax.Array, target: jax.Array, constraint_type: ConstraintType
+    ):
+        linear_offset = default_offset - target
+        roational_offset = (linear_offset + jnp.pi) % (2 * jnp.pi) - jnp.pi
+
+        hinge_offset = roational_offset * (
+            constraint_type == ConstraintType.HINGE.value
+        )
+        prismatic_offset = linear_offset * (
+            constraint_type == ConstraintType.PRISMATIC.value
+        )
+        return hinge_offset + prismatic_offset
+
     @partial(jit, static_argnums=0)
     def func(
         self,

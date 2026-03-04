@@ -563,7 +563,10 @@ class Simulation:
             not_locked = constraint_param.is_velocity[idx_slice]
             is_locked = jnp.logical_not(not_locked)
 
-            offsets = default_offsets - target
+            # Problem: What if Lie group / Manifold? Comparing Lie algebra objects?
+            offsets = jax.vmap(Constraint.compute_offset)(
+                default_offsets, target, constraint_types
+            )
 
             regularization = (
                 holonomic_regularization * is_locked
