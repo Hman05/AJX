@@ -238,9 +238,9 @@ class Simulation:
         # M = jax.scipy.linalg.block_diag(*M_stacked)
 
         # lbda = 1 / Sigma_data * (b_data - G.mul_vector(qdot_target.data.flatten()))
-        lbda = 1 / Sigma_data * (b_data - G_dense @ gvel_target.data.flatten())
+        lbda = 1 / Sigma_data * (b_data - G_dense @ gvel_target.flatten())
 
-        M_vdelta = M.mul_vector(gvel_target.data - state.gvel.data)
+        M_vdelta = M.mul_vector(gvel_target.flatten() - state.gvel.flatten())
 
         # p_ext = M_vdelta - G.vector_mul(lbda)
         p_ext = M_vdelta - G_dense.T @ lbda
