@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 from ajx.definitions import RigidBodyParameters
-from panda3d.core import Quat
+from panda3d.core import Quat, Vec3
 
 
 def normalized(*args):
@@ -169,9 +169,8 @@ class Box:
         self.node = new
 
     def update_node(self, pos, rot):
-        panda_rotation = Quat(*rot)
-        self.node.setPos(*pos)
-        self.node.setHpr(panda_rotation.getHpr())
+        self.node.setPosQuat(Vec3(*pos), Quat(*rot))
+        # self.node.setHpr(panda_rotation.getHpr())
 
     def inertia(self, mass):
         Jx = 1 / 12 * mass * (self.half_extent_y**2 + self.half_extent_z**2)
@@ -204,7 +203,10 @@ class Square:
             self.translation = translation
         else:
             self.translation = (0.0, 0.0, 0.0)
-        self.rotation = rotation
+        if rotation:
+            self.rotation = rotation
+        else:
+            self.rotation = (1.0, 0.0, 0.0, 0.0)
         if color:
             self.color = color
         else:
@@ -247,11 +249,10 @@ class Square:
         new = game.attachNewNode(snode1)
         new.setTwoSided(True)
         self.node = new
+        # self.node.setPosQuat(Vec3(*self.translation), Quat(*self.rotation))
 
     def update_node(self, pos, rot):
-        panda_rotation = Quat(*rot)
-        self.node.setPos(*pos)
-        self.node.setHpr(panda_rotation.getHpr())
+        self.node.setPosQuat(Vec3(*pos), Quat(*rot))
 
 
 def makeCuboid(game, x1, y1, z1, x2, y2, z2, c=[1.0, 1.0, 1.0], name=""):

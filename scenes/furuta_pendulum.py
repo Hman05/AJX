@@ -1,4 +1,6 @@
-from ajx.example_graphics.base import GraphicalEnvironmentBase
+from ajx.example_graphics.environment_scene import EnvironmentScene
+from ajx.example_graphics.application import Application
+
 
 from ajx.example_environments.furuta import Furuta
 
@@ -31,5 +33,7 @@ if __name__ == "__main__":
     theta2 = 4.0
 
     initial_state = environment.state_from_angles(theta1, theta2, env_param)
-    controller = GraphicalEnvironmentBase(environment, env_param, initial_state)
-    controller.run()
+
+    scene = EnvironmentScene(environment, env_param, initial_state)
+    app = Application(scene, 60, "default")
+    app.run()

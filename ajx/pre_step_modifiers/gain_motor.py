@@ -26,12 +26,14 @@ class GainMotorParameters(ParameterNode):
 
 
 class GainMotor2(PreStepModifier):
-    def __init__(self, name: str, constraint, timestep: float, idx: int):
+    def __init__(
+        self, name: str, constraint, timestep: float, idx: int, target_dof: int
+    ):
         self.name = name
         self.constraint = constraint
         self.timestep = timestep
         self.idx = idx
-        self.target_dof = 5
+        self.target_dof = target_dof
 
     def update_params(self, state, u, param):
         body_ids = tuple(
@@ -63,10 +65,11 @@ class GainMotor2(PreStepModifier):
         return state, param.tree_replace(
             {
                 "constraint_param": {
-                    "target": {self.constraint.name: {5: speed}},
+                    "target": {self.constraint.name: {self.target_dof: speed}},
                     "compliance": {
                         self.constraint.name: {
-                            5: self.timestep / sparse_dict_param[self.name].inertia
+                            self.target_dof: self.timestep
+                            / sparse_dict_param[self.name].inertia
                         }
                     },
                 }

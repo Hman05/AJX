@@ -23,23 +23,22 @@ class CartPole(Environment):
 
     def _build_sim(self, sim_settings):
         thin = 0.1
-        cart_z = 0.4
-        cart_center = thin + cart_z / 2
+        cart_y = 0.4
         half_length = 1.24
         cart_half_height = 0.4
         self.cart_box = geometry.Box(
             "cart_box",
             0.5,
+            cart_y / 2,
             cart_half_height,
-            cart_z / 2,
-            translation=(0.0, 0.0, thin + cart_z / 2),
+            translation=(0.0, thin + cart_y / 2, 0.0),
             color=[0.8, 0.6, 0.6],
         )
         self.pendulum_box = geometry.Box(
             "pendulum_box",
             thin,
-            half_length,
             thin,
+            half_length,
             translation=(0.0, 0.0, 0.0),
             color=[0.0, 0.5, 0.5],
         )
@@ -59,15 +58,17 @@ class CartPole(Environment):
             body="cart",
             constraint_type=ConstraintType.PRISMATIC.value,
         )
-        motor_param = GainMotorParameters(0.04, 10.0)
-        motor = GainMotor2("motor", self.prismatic, sim_settings.timestep, 0)
-        prismatic_direction = math.quat_from_axis_angle(
-            jnp.array([0.0, 0.0, 1.0]), jnp.pi / 2
-        )
+        motor_param = GainMotorParameters(0.04, 20.0)
+        motor = GainMotor2("motor", self.prismatic, sim_settings.timestep, 0, 0)
+        # prismatic_direction1 = math.quat_from_axis_angle(
+        #     jnp.array([0.0, 0.0, 1.0]), jnp.pi / 2
+        # )
+        prismatic_direction = math.quat_from_axis_angle(jnp.array([1.0, 0.0, 0.0]), 0.0)
         prismatic_param = ConstraintParameters.create(
+            free_degree=0,
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), prismatic_direction),
             frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), prismatic_direction),
-            compliance=1e-8,
+            compliance=1e-6,
             damping=2 * sim_settings.timestep,
             b=0.04,
             name="prismatic",
@@ -75,10 +76,10 @@ class CartPole(Environment):
 
         track_angle = 0.0
         hinge_cart_rotation = math.quat_from_axis_angle(
-            jnp.array([0.0, 1.0, 0.0]), jnp.pi / 2
+            jnp.array([0.0, 0.0, 1.0]), jnp.pi / 2
         )
         horizontal_rotation = math.quat_from_axis_angle(
-            jnp.array([0.0, 1.0, 0.0]), track_angle
+            jnp.array([0.0, 0.0, 1.0]), track_angle
         )
         hinge_world_rotation = math.quat_mul(hinge_cart_rotation, horizontal_rotation)
         self.hinge = TwoBodyConstraint(
@@ -88,8 +89,9 @@ class CartPole(Environment):
             constraint_type=ConstraintType.HINGE.value,
         )
         hinge_param = ConstraintParameters.create(
+            free_degree=5,
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), hinge_world_rotation),
-            frame_b=Frame(jnp.array([0.0, 1.24, 0.0]), hinge_cart_rotation),
+            frame_b=Frame(jnp.array([0.0, 0.0, 1.24]), hinge_cart_rotation),
             compliance=1e-8,
             damping=2 * sim_settings.timestep,
             b=0.04,
@@ -121,7 +123,7 @@ class CartPole(Environment):
         )
 
         self.default_param = SimulationParameters(
-            jnp.array([0.0, -9.82, 0.0]),
+            jnp.array([0.0, 0.0, -9.82]),
             rb_param,
             constraint_param,
             sparse_param=CartPoleSparseParam(
@@ -140,9 +142,9 @@ class CartPole(Environment):
             geometry.Box(
                 "rail",
                 30,
-                0.2,
                 0.05,
-                translation=(0.0, -cart_half_height, cart_center),
+                0.2,
+                translation=(0.0, -4.5, 0.0),
                 color=[0.4, 0.1, 0.1],
             ),
         )
@@ -176,3 +178,8 @@ class CartPole(Environment):
         elif keymap["l"]:
             motor = -10.0
         return jnp.array([motor])
+
+    def control_help_strings(self):
+        return [
+            "h/l: motor",
+        ]

@@ -67,7 +67,7 @@ class Furuta(Environment):
             name="hinge1",
             # body_a=None,
             body="arm1",
-            constraint_type=ConstraintType.HINGE.value,
+            constraint_type=ConstraintType.PRISMATIC.value,
         )
         rotation1 = math.quat_from_axis_angle(jnp.array([0.0, 0.0, 1.0]), 0.5 * jnp.pi)
         rotation2 = math.quat_from_axis_angle(jnp.array([1.0, 0.0, 0.0]), -0.0 * jnp.pi)
@@ -75,11 +75,12 @@ class Furuta(Environment):
 
         electric_motor_param = GainMotorParameters(0.0004, 7.5)  # 0.00265, 0.0039
         electric_motor = GainMotor2(
-            "electric_motor", self.hinge1, sim_settings.timestep, 0
+            "electric_motor", self.hinge1, sim_settings.timestep, 0, 5
         )
         # self.electric_motor = TargetSpeedMotor("electric_motor", "hinge1_motor", 0)
 
         hinge1_param = ConstraintParameters.create(
+            free_degree=5,
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), rotation1),
             frame_b=Frame(jnp.array([-com_displacement1, 0.0, 0.0]), rotation1),
             compliance=1e-5,
@@ -95,9 +96,10 @@ class Furuta(Environment):
             name="hinge2",
             body_a="arm1",
             body_b="arm2",
-            constraint_type=ConstraintType.HINGE.value,
+            constraint_type=ConstraintType.PRISMATIC.value,
         )
         hinge2_param = ConstraintParameters.create(
+            free_degree=5,
             frame_a=Frame(jnp.array([com_to_rod_end1, 0.0, 0.0]), rotation3),
             frame_b=Frame(jnp.array([0, com_displacement2, 0.0]), rotation2),
             compliance=1e-5,

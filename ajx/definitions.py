@@ -130,6 +130,7 @@ class ConstraintParameters(ParameterNode):
     @classmethod
     def create(
         cls,
+        free_degree: int,
         frame_a: Frame,
         frame_b: Frame,
         compliance: float,
@@ -137,16 +138,13 @@ class ConstraintParameters(ParameterNode):
         b: float,
         name: str,
     ):
-        holonomic_compliance = jnp.array([compliance] * 5)[None]
-        holonomic_damping = jnp.array([damping] * 5)[None]
-        viscous_compliance = jnp.array([1.0 / b])[None]
-        ignored_damping = jnp.array([damping])[None]
+        holonomic_compliance = jnp.array([compliance] * 6)[None]
+        holonomic_damping = jnp.array([damping] * 6)[None]
+        ignored_damping = damping
         target = jnp.zeros(6)[None]
-        compliance = jnp.concatenate([holonomic_compliance, viscous_compliance], axis=1)
-        damping = jnp.concatenate([holonomic_damping, ignored_damping], axis=1)
-        is_velocity = jnp.array([False, False, False, False, False, True], dtype=bool)[
-            None
-        ]
+        compliance = holonomic_compliance.at[:, free_degree].set(1.0 / b)
+        damping = holonomic_damping.at[:, free_degree].set(ignored_damping)
+        is_velocity = jnp.array([False] * 6).at[free_degree].set(True)
         names = (name,)
         return cls(
             names,

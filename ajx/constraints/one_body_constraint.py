@@ -11,7 +11,12 @@ from ajx.definitions import Transform, State
 from ajx.param import SimulationParameters
 from typing import Union, Tuple
 from functools import partial
-from ajx.constraints.base import Constraint, ConstraintType, get_frame_transform
+from ajx.constraints.base import (
+    Constraint,
+    ConstraintType,
+    get_frame_transform,
+    get_frame_transform_ext,
+)
 
 
 @struct.dataclass
@@ -24,9 +29,9 @@ class OneBodyConstraint(Constraint):
      - Primsatic
     """
 
-    name: str
-    body: str
-    constraint_type: ConstraintType
+    name: str = struct.field(pytree_node=False)
+    body: str = struct.field(pytree_node=False)
+    constraint_type: ConstraintType = struct.field(pytree_node=False)
 
     @classmethod
     def get_num_bodies(cls):
@@ -71,19 +76,24 @@ class OneBodyConstraint(Constraint):
     def compute_offset(
         default_offset: jax.Array, target: jax.Array, constraint_type: ConstraintType
     ):
-        linear_offset = default_offset - target
-        roational_offset = (linear_offset + jnp.pi) % (2 * jnp.pi) - jnp.pi
+        hinge_rotational_degrees = jnp.array(
+            [0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=bool
+        ) * (constraint_type == ConstraintType.HINGE.value)
+        prismatic_rotational_degrees = jnp.array(
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=bool
+        ) * (constraint_type == ConstraintType.PRISMATIC.value)
+        rotational_degrees = hinge_rotational_degrees + prismatic_rotational_degrees
+        linear_degrees = jnp.logical_not(rotational_degrees)
 
-        hinge_offset = roational_offset * (
-            constraint_type == ConstraintType.HINGE.value
-        )
-        prismatic_offset = linear_offset * (
-            constraint_type == ConstraintType.PRISMATIC.value
-        )
-        return hinge_offset + prismatic_offset
+        linear_offset = (default_offset - target) * linear_degrees
+        roational_offset = (
+            (default_offset - target + jnp.pi) % (2 * jnp.pi) - jnp.pi
+        ) * rotational_degrees
+
+        return linear_offset + roational_offset
 
     @partial(jit, static_argnums=0)
-    def func(
+    def func2(
         self,
         state: State,
         param: SimulationParameters,
@@ -91,7 +101,7 @@ class OneBodyConstraint(Constraint):
         body_id = param.rigid_body_param.names.index(self.body)
         constraint_id = param.constraint_param.names.index(self.name)
         return OneBodyConstraint.func(
-            param, state, (body_id,), constraint_id, self.constraint_type
+            param, state, (body_id,), (constraint_id,), self.constraint_type
         )
 
     @jit
@@ -112,7 +122,7 @@ class OneBodyConstraint(Constraint):
         body_a_pos = jnp.array([0.0, 0.0, 0.0])
         body_a_rot = jnp.array([1.0, 0.0, 0.0, 0.0])
 
-        d_a, u_a, v_a, w_a = get_frame_transform(
+        d_a, u_a, v_a, w_a, q_a = get_frame_transform_ext(
             param.constraint_param.frame_a, constraint_id, body_a_pos, body_a_rot
         )
 
@@ -124,6 +134,7 @@ class OneBodyConstraint(Constraint):
         r_b = body_b_pos + d_b
 
         spherical = r_a - r_b
+        co_spherical = math.rotate_vector(q_a, spherical)
         dot1_1 = jnp.dot(u_a, v_b)
         dot1_2 = jnp.dot(u_a, w_b)
         dot1_3 = jnp.dot(w_a, v_b)
@@ -159,7 +170,7 @@ class OneBodyConstraint(Constraint):
             [spherical, dot1_1[None], dot1_2[None], free_hinge[None]]
         ) * (constraint_type == ConstraintType.HINGE.value)
         prismatic_constraint = jnp.block(
-            [dot2_1, dot2_2, dot1_1, dot1_2, dot1_3, free_prismatic[None]]
+            [co_spherical, dot1_1[None], dot1_2[None], free_hinge[None]]
         ) * (constraint_type == ConstraintType.PRISMATIC.value)
         return hinge_constraint + prismatic_constraint
 
@@ -190,7 +201,7 @@ class OneBodyConstraint(Constraint):
         body_a_pos = jnp.array([0.0, 0.0, 0.0])
         body_a_rot = jnp.array([1.0, 0.0, 0.0, 0.0])
 
-        d_a, u_a, v_a, w_a = get_frame_transform(
+        d_a, u_a, v_a, w_a, q_a = get_frame_transform_ext(
             param.constraint_param.frame_a, constraint_id, body_a_pos, body_a_rot
         )
         d_b, u_b, v_b, w_b = get_frame_transform(
@@ -202,6 +213,8 @@ class OneBodyConstraint(Constraint):
         dot1_2_b = jnp.block([jnp.zeros([1, 3]), -jnp.cross(u_a, w_b)])
         dot1_3_b = jnp.block([jnp.zeros([1, 3]), -jnp.cross(w_a, v_b)])
 
+        R_a = math.rotation_matrix(q_a)
+        co_spherical_b = jnp.block([-R_a, R_a @ math.skew(d_b)])
         dot2_1_b = jnp.block([-u_a[None], jnp.zeros([1, 3])])
         dot2_2_b = jnp.block([-w_a[None], jnp.zeros([1, 3])])
         dot2_3_b = jnp.block([-v_a[None], jnp.zeros([1, 3])])
@@ -211,7 +224,7 @@ class OneBodyConstraint(Constraint):
             [spherical_b, dot1_1_b, dot1_2_b, u_a_tangent_b], axis=None
         ) * (constraint_type == 0)
         jac_prismatic = jnp.concatenate(
-            [dot2_1_b, dot2_2_b, dot1_1_b, dot1_2_b, dot1_3_b, dot2_3_b], axis=None
+            [co_spherical_b, dot1_1_b, dot1_2_b, u_a_tangent_b], axis=None
         ) * (constraint_type == 1)
 
         return jac_hinge + jac_prismatic
@@ -304,7 +317,7 @@ class OneBodyConstraint(Constraint):
         d0_b = cp.frame_b.position[i]
         frame_b_rot0_inv = math.conjugate(frame_b_rot0)
         prismatic_body_b_rotation = math.quat_mul(frame_b_rot, frame_b_rot0_inv)
-        prismatic_body_b_position = frame_b_pos - d_a
+        prismatic_body_b_position = frame_b_pos + d_a
 
         body_b_rotation = hinge_body_b_rotation * (
             self.constraint_type == ConstraintType.HINGE.value

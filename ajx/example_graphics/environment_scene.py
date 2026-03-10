@@ -7,9 +7,8 @@ import jax.numpy as jnp
 import numpy as np
 from jax import jit
 from ajx.example_graphics.geometry import Box, Square, Model
-from ajx.example_graphics.default_scene import Game
-from ajx.example_environments.pendulum import Pendulum
 import copy
+
 from panda3d.core import (
     GeomVertexFormat,
     GeomVertexArrayFormat,
@@ -33,56 +32,70 @@ from panda3d.core import TextNode
 import scipy
 from loguru import logger
 
+from panda3d.core import AmbientLight
+from panda3d.core import DirectionalLight
+from panda3d.core import PointLight
+from typing import Tuple
 
-class GraphicalEnvironmentBase(DirectObject):
+
+class EnvironmentScene:
     def __init__(
         self,
         env,
         env_param,
         initial_state,
-        trajectory_path=None,
-        synchronized_start_k=0,
     ):
         self.timestep = env.sim.settings.timestep
         self.environment = env
         self.env_param = env_param
         self.initial_state = initial_state
-        self.game = Game(framerate=1 / self.timestep)
 
         self.step = jit(env.step)
         self.observe = jit(env.observe_state)
 
         self.physics_is_active = True
-        self.replay_active = False
+        self.displayed_information = 0
 
         self.state = copy.deepcopy(self.initial_state)
         self.observation = jnp.zeros([len(env.observable_names)])
 
-        self.create_graphics(initial_state)
-        self.create_events()
-
         self.u = jnp.array([0.0])
         self.last_observation = None
         self.contoller_is_active = True
-        self.reset_k = synchronized_start_k
-        self.k = self.reset_k
-        self.counter = 0
 
         self.state_sequence = None
-        if trajectory_path:
-            import pickle
 
-            with open(trajectory_path, "rb") as input_file:
-                raw_data = pickle.load(input_file)
+    def setup(self, base: DirectObject, render):
+        def toggle_physics():
+            self.physics_is_active = not self.physics_is_active
 
-            if type(raw_data).__name__ == "TrajectoryDataset":
-                self.state_sequence = raw_data.initial_states
-            else:
-                self.state_sequence = jax.vmap(env.unflatten)(
-                    raw_data["rollout"].trajectory
-                )
+        def cycle_information():
+            self.displayed_information = (self.displayed_information + 1) % 4
 
-    def create_graphics(self, initial_state):
+        # Key bindings
+        base.accept("p", toggle_physics)
+        base.accept("o", cycle_information)
+
+        # Light
+        alight = AmbientLight("ambientLight")
+        alight.set_color((0.5, 0.5, 0.5, 1))
+        alightNP = render.attach_new_node(alight)
+
+        dlight = DirectionalLight("directionalLight")
+        dlight.set_direction((1, 1, -1))
+        dlight.set_color((0.7, 0.7, 0.7, 1))
+        dlightNP = render.attach_new_node(dlight)
+
+        plight = PointLight("plight")
+        plight.set_color((0.0, 1.0, 0.0, 1))
+        plight.attenuation = (1, 0, 1)
+        plnp = render.attachNewNode(plight)
+        plnp.setPos(0, 0.5, 0)
+
+        render.clear_light()
+        render.set_light(alightNP)
+        render.set_light(dlightNP)
+
         self.geometry_dict = {
             geometry.name: geometry for geometry in self.environment.geometry_list
         }
@@ -93,14 +106,14 @@ class GraphicalEnvironmentBase(DirectObject):
                     g_name in self.geometry_dict
                 ), f"Unknown geometry label found. Did you forget to add {g_name} to the geometry list?"
                 geometry = self.geometry_dict[g_name]
-                geometry.create_node(self.game)
+                geometry.create_node(base)
         render.flattenLight()
 
         if jax.default_backend() == "gpu":
             logger.warning("Running physics on GPU. CPU is likely faster.")
 
         for geometry in self.environment.extra_geometry:
-            geometry.create_node(self.game)
+            geometry.create_node(base)
 
         self.text_displays = [
             OnscreenText(
@@ -114,34 +127,17 @@ class GraphicalEnvironmentBase(DirectObject):
             )
             for i in range(10)
         ]
-        base.camLens.setNearFar(0.01, 200)
+        base.camLens.setNearFar(0.01, 2000)
 
-        # Load the skybox
-        # self.skybox = loader.loadModel("skybox2.bam")
-        # self.skybox.setScale(200)
-        # self.skybox.reparentTo(render)
-        # self.skybox.setShaderOff()
-        # self.skybox.setBin("background", 0)
-        # self.skybox.setDepthWrite(0)
-        # self.skybox.setLightOff()
-        # self.skybox.setTwoSided(True)
-
-        # define the colors at the top ("sky"), bottom ("ground") and center
-        # ("horizon") of the background gradient
+        # Create sky gradient
         sky_color = (1.0, 1.0, 1.0, 1.0)
         horizon_color = (0.1, 0, 0.8, 1.0)  # optional
         ground_color = (0, 0.0, 0.2, 1.0)
-        # sky_color = (1.0, 1.0, 1.0, 1.0)
-        # horizon_color = (1.0, 1.0, 1.0, 1.0)
-        # ground_color = (1.0, 1.0, 1.0, 1.0)
         self.background_gradient = self.create_gradient(
             sky_color, ground_color, horizon_color
         )
-        # looks like the background needs to be parented to an intermediary node
-        # to which a compass effect is applied to keep it at the same position
-        # as the camera, while being parented to render
         pivot = render.attach_new_node("pivot")
-        effect = CompassEffect.make(camera, CompassEffect.P_pos)
+        effect = CompassEffect.make(base.camera, CompassEffect.P_pos)
         pivot.set_effect(effect)
         self.background_gradient.reparent_to(pivot)
         # now the background model just needs to keep facing the camera (only
@@ -160,7 +156,6 @@ class GraphicalEnvironmentBase(DirectObject):
         self.background_gradient.set_effect(effect)
 
     def create_gradient(self, sky_color, ground_color, horizon_color=None):
-
         vertex_format = GeomVertexFormat()
         array_format = GeomVertexArrayFormat()
         array_format.add_column(
@@ -227,10 +222,10 @@ class GraphicalEnvironmentBase(DirectObject):
             [
                 0,
                 2,
-                1,  # left triangle; should never be in view
+                1,
                 3,
                 4,
-                5,  # right triangle; should never be in view
+                5,
                 0,
                 4,
                 3,
@@ -271,111 +266,67 @@ class GraphicalEnvironmentBase(DirectObject):
 
         return prism
 
-    def create_events(self):
-        self.key_map = {
-            "l": False,
-            "h": False,
-            "j": False,
-            "k": False,
-            "u": False,
-            "i": False,
-            "m": False,
-            ",": False,
-            "n": False,
-            "y": False,
-            "6": False,
-            "7": False,
-        }
-        self.game.setStepFunction(self.update)
+    def get_initial_camera_transform(self) -> Tuple[Quat, Vec3]:
+        camera_rot = Quat(1.0, 0.0, 0.0, 0.0)
+        camera_pos = Vec3(0.0, 0.0, 0.0)
+        if hasattr(self.environment, "camera_rot"):
+            camera_rot = Quat(*self.environment.camera_rot)
+        if hasattr(self.environment, "camera_pos"):
+            camera_pos = Vec3(*self.environment.camera_pos)
 
-        def toggle_physics():
-            self.physics_is_active = not self.physics_is_active
+        return camera_pos, camera_rot
 
-        def step_physics():
+    def reset(self):
+        self.state = self.initial_state
+        self.observation = self.observe(self.state, -self.u, self.env_param)
+
+    def update(self, key_map):
+        self.pre_update(key_map)
+        if self.physics_is_active:
             self.update_physics()
             self.update_geometry()
 
-        def toggle_replay():
-            self.replay_active = not self.replay_active
-
-        def toggle_controller():
-            self.contoller_is_active = not self.contoller_is_active
-
-        def update_key_map(key, state):
-            self.key_map[key] = state
-
-        self.game.setResetFunction(self.reset)
-        self.accept("p", toggle_physics)
-        self.accept("c", toggle_controller)
-        self.accept("t", toggle_replay)
-        self.accept("s", step_physics)
-
-        self.accept("l", update_key_map, ["l", True])
-        self.accept("l-up", update_key_map, ["l", False])
-        self.accept("h", update_key_map, ["h", True])
-        self.accept("h-up", update_key_map, ["h", False])
-        self.accept("j", update_key_map, ["j", True])
-        self.accept("j-up", update_key_map, ["j", False])
-        self.accept("k", update_key_map, ["k", True])
-        self.accept("k-up", update_key_map, ["k", False])
-        self.accept("u", update_key_map, ["u", True])
-        self.accept("u-up", update_key_map, ["u", False])
-        self.accept("i", update_key_map, ["i", True])
-        self.accept("i-up", update_key_map, ["i", False])
-        self.accept("m", update_key_map, ["m", True])
-        self.accept("m-up", update_key_map, ["m", False])
-        self.accept(",", update_key_map, [",", True])
-        self.accept(",-up", update_key_map, [",", False])
-        self.accept("n", update_key_map, ["n", True])
-        self.accept("n-up", update_key_map, ["n", False])
-        self.accept("y", update_key_map, ["y", True])
-        self.accept("y-up", update_key_map, ["y", False])
-        self.accept("6", update_key_map, ["6", True])
-        self.accept("6-up", update_key_map, ["6", False])
-        self.accept("7", update_key_map, ["7", True])
-        self.accept("7-up", update_key_map, ["7", False])
-
-    def reset(self):
-        if self.replay_active:
-            self.k = self.reset_k
-        else:
-            self.state = self.initial_state
-            self.observation = self.observe(self.state, -self.u, self.env_param)
-
-    def update(self, task):
-        self.pre_update(task)
-        simulate_physics = self.physics_is_active and (not self.replay_active)
-        if simulate_physics:
-            self.update_physics()
-        elif self.replay_active:
-            self.update_trajectory()
-            self.observation = self.observe(self.state, -self.u, self.env_param)
-
-        self.update_geometry()
-        if self.physics_is_active and self.replay_active:
-            self.k += 1
-        self.counter += 1
-
-        return task.cont
-
     def update_geometry(self):
-        info_list = self.environment.observation_strings(self.observation)
-        if len(info_list) > 0:
-            for i in range(min(len(info_list), len(self.text_displays))):
-                self.text_displays[i].setText(info_list[i])
-        # Very slow...
-        sim = 2
-        r = (self.counter * sim) % len(self.environment.sim.rigid_body_list)
-        for i, rb in enumerate(self.environment.sim.rigid_body_list):  # [r : r + sim]
-            i = i
-            for g_name in rb.geometry:
-                # assert g_name in self.geometry_dict
-                geometry = self.geometry_dict[g_name]
-                geometry.update_node(self.state.conf.pos[i], self.state.conf.rot[i])
+        info_list = [
+            "o: Cycle displayed information",
+            "r: Restart scene",
+            "p: Toggle physics",
+        ]
+        if self.displayed_information == 1:
+            info_list = [
+                "Left mouse + drag: Pan the camera",
+                "Middle mouse + drag: Rotate the view",
+                "Right mouse + drag: Zoom in/out",
+            ]
+        if self.displayed_information == 2:
+            info_list = self.environment.control_help_strings()
+        if self.displayed_information == 3:
+            info_list = self.environment.observation_strings(self.observation)
 
-    def pre_update(self, task):
+        if len(info_list) > 0:
+            for i in range(0, len(self.text_displays)):
+                if len(info_list) > i:
+                    self.text_displays[i].setText(info_list[i])
+                else:
+                    self.text_displays[i].setText("")
+
+        rb_list = self.environment.sim.rigid_body_list
+        geo_dict = self.geometry_dict
+
+        # per timestep/frame:
+        pos_np = np.asarray(jax.device_get(self.state.conf.pos))  # (N,3)
+        rot_np = np.asarray(jax.device_get(self.state.conf.rot))  # (N,4)
+
+        for i, rb in enumerate(rb_list):
+            pos = pos_np[i]
+            rot = rot_np[i]
+            q = Quat(*rot)
+            for g_name in rb.geometry:
+                geo_dict[g_name].node.setPosQuat(Vec3(*pos), q)
+
+    def pre_update(self, key_map):
         self.u = self.environment.control_func(
-            self.observation, self.last_observation, self.key_map
+            self.observation, self.last_observation, key_map
         )
 
     def update_physics(self):
@@ -388,5 +339,5 @@ class GraphicalEnvironmentBase(DirectObject):
             self.state = self.state_sequence[self.k % traj_length]
 
     def run(self):
-        self.game.enableMouse()
+        # self.game.enableMouse()
         self.game.run()

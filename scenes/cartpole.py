@@ -1,4 +1,5 @@
-from ajx.example_graphics.base import GraphicalEnvironmentBase
+from ajx.example_graphics.environment_scene import EnvironmentScene
+from ajx.example_graphics.application import Application
 
 from ajx.example_environments.cartpole import CartPole
 
@@ -14,5 +15,6 @@ if __name__ == "__main__":
 
     initial_state = env.state_from_angles(5.0, 3.0, env_param)
 
-    controller = GraphicalEnvironmentBase(env, env_param, initial_state)
-    controller.run()
+    scene = EnvironmentScene(env, env_param, initial_state)
+    app = Application(scene, 60, "default")
+    app.run()
