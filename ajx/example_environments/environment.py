@@ -41,7 +41,7 @@ class Environment(ABC):
             state, action, param
         )
         observation = self.sim.observe(state, qdot_next, param)
-        new_state = self.sim.post_step(state, qdot_next)
+        new_state = self.sim.post_step(state, qdot_next, multipliers)
         return new_state, observation
 
     def step_state(self, state, action, param):
@@ -59,6 +59,9 @@ class Environment(ABC):
                 f"{constraint.name}.{mn}" for mn in constraint.get_multiplier_names()
             ]
         ]
+    
+    def get_multiplier_size(self):
+        return sum([c.get_constrained_degrees() for c in self.sim.constraint_list])
 
     def get_state_names(self):
         pos_coords = [".x", ".y", ".z"]

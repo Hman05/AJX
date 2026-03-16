@@ -81,7 +81,12 @@ class FreeBody(Environment):
         initial_linear_velocity = jnp.array([0.0, 0.0, 0.0])
         initial_gvel = jnp.concatenate([initial_linear_velocity, angvel])
         initial_gvel = GeneralizedVelocity(initial_gvel[None])
-        return State(initial_conf, initial_gvel)
+
+        # When using the PGS-solver with warm starting, multiplier size needs to be correctly specified for jax.jit compilation to work
+        multipliers_size = self.get_multiplier_size()
+        multipliers = jnp.zeros([multipliers_size])
+
+        return State(initial_conf, initial_gvel, multipliers=multipliers)
 
     def control_func(self, observation, last_observation, key_map, control_state):
         return jnp.array([0.0]), control_state

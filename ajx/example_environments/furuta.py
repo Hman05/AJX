@@ -199,7 +199,12 @@ class Furuta(Environment):
 
         initial_conf = self.observation_to_configuration(initial_observations, param)
         initial_gvel = GeneralizedVelocity(jnp.zeros([2, 6]))
-        return State(initial_conf, initial_gvel)
+
+        # When using the PGS-solver with warm starting, multiplier size needs to be correctly specified for jax.jit compilation to work
+        multipliers_size = self.get_multiplier_size()
+        multipliers = jnp.zeros([multipliers_size])
+
+        return State(initial_conf, initial_gvel, multipliers=multipliers)
 
     def control_func(self, observation, last_observation, keymap, control_state):
         if not keymap:

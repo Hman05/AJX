@@ -111,7 +111,7 @@ class GeneralizedVelocity(ParameterNode):
 class State(ParameterNode):
     conf: Configuration
     gvel: GeneralizedVelocity
-
+    multipliers: jax.Array = struct.field(default_factory=lambda: jnp.zeros([0]))
     tangent_restrictions: Tuple[str] = struct.field(
         pytree_node=False, default=tuple(["conf", "gvel"])
     )

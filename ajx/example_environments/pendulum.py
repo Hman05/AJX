@@ -123,7 +123,11 @@ class Pendulum(Environment):
         initial_conf = self.observation_to_configuration(initial_obs, param)
         initial_gvel = GeneralizedVelocity(jnp.zeros([1, 6]))
 
-        return State(initial_conf, initial_gvel)
+        # When using the PGS-solver with warm starting, multiplier size needs to be correctly specified for jax.jit compilation to work
+        multipliers_size = self.get_multiplier_size()
+        multipliers = jnp.zeros([multipliers_size])
+
+        return State(initial_conf, initial_gvel, multipliers=multipliers)
 
     def unflatten(self, flat_state):
         sizes = jnp.array([1 * 3, 1 * 4, 1 * 6])

@@ -1,44 +1,44 @@
+from enum import Enum
+from functools import partial
+from typing import Dict, Tuple
+
+import jax
 import jax.numpy as jnp
 import numpy as np
-import jax
-import ajx.math as math
-
-from ajx.definitions import (
-    RigidBody,
-    ScalarBody,
-    State,
-    Configuration,
-    GeneralizedVelocity,
-)
-from ajx.pre_step_modifiers import PreStepModifier
-from ajx.constraints import Constraint
-
-from ajx.sensors import Sensor
-from typing import Dict, List, Tuple, Optional
+from flax import struct
+from jax import jit
 from loguru import logger
 
+import ajx.math as math
 from ajx.block_sparse.csc_ldlt import ldlt_solve
+from ajx.block_sparse.svbd_matrix import SVBDMatrix
 from ajx.block_sparse.vbc_matrix import VBCMatrix
 from ajx.block_sparse.vbr_matrix import VBRMatrix
-from ajx.block_sparse.svbd_matrix import SVBDMatrix
+from ajx.constraints import Constraint
+from ajx.definitions import (
+    Configuration,
+    GeneralizedVelocity,
+    RigidBody,
+    RigidBodyParameters,
+    ScalarBody,
+    State,
+)
 from ajx.param import SimulationParameters
-from ajx.definitions import RigidBodyParameters
-
-from flax import struct
-from functools import partial
-from jax import jit
-from enum import Enum
+from ajx.pre_step_modifiers import PreStepModifier
+from ajx.projected_gauss_seidel import gauss_seidel_dense
+from ajx.sensors import Sensor
 
 from ajx.symbolic import (
     get_constraint_sparsity,
     get_schur_fillin_sparsity,
 )
-from flax import struct
 
 
 class Solver(Enum):
     DENSE_LINEAR = 1
     SPARSE_LINEAR = 2
+    DENSE_PGS = 3
+    SPARSE_PGS = 4
 
 
 @struct.dataclass
@@ -140,7 +140,8 @@ class Simulation:
 
         return state, self._force_solver(state, f_ext, param)
 
-    def post_step(self, state: State, gvel_next: GeneralizedVelocity) -> State:
+    @partial(jit, static_argnums=0)
+    def post_step(self, state: State, gvel_next: GeneralizedVelocity, multipliers: jax.Array) -> State:
         """
         Update the state using the given velocity update.
 
@@ -151,7 +152,8 @@ class Simulation:
         gvel_next: GeneralizedVelocity
             The velocity update
             TODO: Should be replaced with the full result from pre_step (intermediates)
-
+        multipliers: jax.Array
+            Lagrange multipliers from last step
         Returns:
         -------
         State:
@@ -181,8 +183,8 @@ class Simulation:
         state_next = state.replace(
             conf=conf_next,
             gvel=gvel_next,
+            multipliers=multipliers
         )
-
         return state_next
 
     def observe(
@@ -328,7 +330,6 @@ class Simulation:
     def _force_solver(
         self, state: State, f_ext: jax.Array, param: SimulationParameters
     ) -> Tuple[Tuple[State, jax.Array], int]:
-
         logger.trace("Tracing force_solver")
         gvel = state.gvel.flatten()
 
@@ -345,6 +346,10 @@ class Simulation:
 
             lbda = ldlt_solve(S_sparse, rsi_list, rhs)
             GTlbda = G.vector_mul(lbda)
+
+            # To update velocity
+            constraint_imp = M_inv.mul_vector(GTlbda)
+            qdot_next = gvel + constraint_imp + self.h * M_inv_f
         elif self.settings.solver == Solver.DENSE_LINEAR:
             M_inv_dense = M_inv.to_scalar_matrix()
             G_dense = G.to_scalar_matrix()
@@ -353,10 +358,21 @@ class Simulation:
             rhs = b_data - G_dense @ gvel - self.h * G_dense @ M_inv_f
             lbda = jax.scipy.linalg.solve(S, rhs)
             GTlbda = G_dense.T @ lbda
+
+            # To update velocity
+            constraint_imp = M_inv.mul_vector(GTlbda)
+            qdot_next = gvel + constraint_imp + self.h * M_inv_f
+        elif self.settings.solver == Solver.DENSE_PGS:
+            M_inv_dense = M_inv.to_scalar_matrix()
+            G_dense = G.to_scalar_matrix()
+
+            # To compute solution
+            lbda0 = state.multipliers
+            qdot_next, lbda = gauss_seidel_dense(
+                gvel, lbda0, G_dense, M_inv_dense, Sigma_data, self.h, f_ext.flatten(), b_data, Nit=800
+            )
         else:
             raise NotImplementedError
-        constraint_imp = M_inv.mul_vector(GTlbda)
-        qdot_next = state.gvel.flatten() + constraint_imp + self.h * M_inv_f
         code = 0
         gvel_next = GeneralizedVelocity(
             qdot_next[:n_rb_dof].reshape(-1, 6), qdot_next[n_rb_dof:]
@@ -698,9 +714,6 @@ class Simulation:
         S = VBCMatrix(S_data, row_indices, col_ptr, block_sizes, block_sizes)
 
         return S, rsi_dict
-
-
-import numpy as np
 
 
 def _bdot_over_intersection(
