@@ -14,30 +14,45 @@ if __name__ == "__main__":
     timestep = 0.016667
 
     environment = DLO(
-        sim_settings=SimulationSettings(timestep, True, Solver.SPARSE_LINEAR),
+        sim_settings=SimulationSettings(timestep, True, Solver.DENSE_LINEAR),
         env_settings=DLOSettings(
             n_bodies=100,
-            body_length=0.04,
-            constraint_type=ConstraintType.PRISMATIC.value,
-            loose_end=True,
+            body_length=0.02,
+            constraint_type=ConstraintType.SE3.value,
+            loose_end=False,
         ),
     )
-    yz_compliance = 1e-6
-    x_compliance = 1e-2
-    bend_compliance = 1e-6
-    torsion_compliance = 5e-1
+    yz_linear_stiffness = 1e5
+    x_linear_stiffness = 1e5
+    bend_linear_stiffness = 1e5
+    torsion_linear_stiffness = 1e5
+
+    yz_quadratic_stiffness = 0.0
+    x_quadratic_stiffness = 0.0
+    bend_quadratic_stiffness = 0.0
+    torsion_quadratic_stiffness = 0.0
 
     env_param = environment.default_param.tree_replace(
         src={
             "sparse_param.coupled_constraint_param": {
-                "compliance": jnp.array(
+                "linear_stiffness": jnp.array(
                     [
-                        x_compliance,
-                        yz_compliance,
-                        yz_compliance,
-                        bend_compliance,
-                        bend_compliance,
-                        torsion_compliance,
+                        x_linear_stiffness,
+                        yz_linear_stiffness,
+                        yz_linear_stiffness,
+                        bend_linear_stiffness,
+                        bend_linear_stiffness,
+                        torsion_linear_stiffness,
+                    ]
+                ),
+                "quadratic_stiffness": jnp.array(
+                    [
+                        x_quadratic_stiffness,
+                        yz_quadratic_stiffness,
+                        yz_quadratic_stiffness,
+                        bend_quadratic_stiffness,
+                        bend_quadratic_stiffness,
+                        torsion_quadratic_stiffness,
                     ]
                 ),
                 "is_velocity": jnp.array([0, 0, 0, 0, 0, 0]),

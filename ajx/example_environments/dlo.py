@@ -25,7 +25,8 @@ class DLOState(ParameterNode):
 
 @struct.dataclass
 class CoupledConstraintParameters(ParameterNode):
-    compliance: jax.Array
+    linear_stiffness: jax.Array
+    quadratic_stiffness: jax.Array
     damping: jax.Array
     is_velocity: jax.Array
 
@@ -34,18 +35,40 @@ DLOSparseParam = create_parameter_node("DLOSparseParam", ("coupled_constraint_pa
 
 
 @struct.dataclass
+class NonlinearUpdate(PreStepModifier):
+    name: str
+    target: str
+    lbda: Any
+
+    def update_params(self, state: DLOState, u: jax.Array, param: SimulationParameters):
+        new_param = param.tree_replace({self.target: self.lbda(state)})
+        return state, new_param
+
+
+@struct.dataclass
 class CoupleConstraints(PreStepModifier):
     name: str
     target_slice: Tuple[int, int]
+    body_ids: Tuple[int, int]
+    constraint_ids: int
+    constraint_type: ConstraintType
 
     def update_params(self, state: DLOState, u: jax.Array, param: SimulationParameters):
         ccp: CoupledConstraintParameters = param.sparse_param.coupled_constraint_param
         slice_begin = self.target_slice[0]
         slice_end = self.target_slice[1]
         constraint_param = param.constraint_param
+        offsets = vmap(TwoBodyConstraint.func, in_axes=(None, None, 0, 0, None))(
+            param, state, self.body_ids, self.constraint_ids, self.constraint_type
+        )
+        compliance = jnp.clip(
+            1 / (ccp.linear_stiffness + jnp.abs(offsets) * ccp.quadratic_stiffness),
+            1e-6,
+            1e8,
+        )
         constraint_param = constraint_param.replace(
             compliance=constraint_param.compliance.at[slice_begin:slice_end].set(
-                ccp.compliance
+                compliance
             )
         )
         constraint_param = constraint_param.replace(
@@ -133,6 +156,37 @@ class DLO(Environment):
         gradient = gradient_start - jnp.outer(
             jnp.arange(n), (gradient_start - gradient_end) / n
         )
+        density = 10.0
+        grapple_box_length = 0.1
+        grapple1_box = geometry.Box(
+            f"grapple1_box",
+            grapple_box_length,
+            0.6,
+            0.3,
+            translation=(0.0, 0.0, 0.0),
+            color=(0.1, 0.1, 0.1),
+        )
+        grapple2_box = geometry.Box(
+            f"grapple2_box",
+            grapple_box_length,
+            0.6,
+            0.3,
+            translation=(0.0, 0.0, 0.0),
+            color=(0.1, 0.1, 0.1),
+        )
+        grapple1 = RigidBody(f"grapple1", (f"grapple1_box",))
+        grapple1_param = RigidBodyParameters.create(
+            mass=density * 0.4 * 0.4 * grapple_box_length,
+            inertia_diag=grapple1_box.get_diag_inertia(density),
+            name="grapple1",
+        )
+
+        grapple2 = RigidBody(f"grapple2", (f"grapple2_box",))
+        grapple2_param = RigidBodyParameters.create(
+            mass=density * 0.4 * 0.4 * grapple_box_length,
+            inertia_diag=grapple2_box.get_diag_inertia(density),
+            name="grapple2",
+        )
         for i in range(self.env_settings.n_bodies):
             box = geometry.Box(
                 f"box{i}",
@@ -143,7 +197,6 @@ class DLO(Environment):
                 color=tuple([*gradient[i]]),
             )
             boxes.append(box)
-            density = 10.0
             mass = density * 0.1 * 0.1 * self.env_settings.body_length
             inertia = box.get_diag_inertia(density)
 
@@ -171,20 +224,39 @@ class DLO(Environment):
         #     )
 
         self.first_lock = OneBodyConstraint(
-            name=f"lock_first",
-            body="body0",
-            constraint_type=self.env_settings.constraint_type,
+            name=f"grapple1_lock",
+            body="grapple1",
+            constraint_type=ConstraintType.SE3.value,
         )
         bl = self.env_settings.body_length
         first_lock_param = ConstraintParameters.create_locked(
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), rotation1),
-            frame_b=Frame(jnp.array([bl, 0.0, 0.0]), rotation2),
+            frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), rotation2),
             compliance=1e-8,
             damping=2 * self.reference_timestep,
             offset=0.0,
-            name="lock_first",
+            name="grapple1_lock",
         )
-        for i in range(self.env_settings.n_bodies - 1):
+        # First lock joint
+        self.lock_joints.append(
+            TwoBodyConstraint(
+                name=f"lock_g1_to_dlo",
+                body_a=f"grapple1",
+                body_b=f"body0",
+                constraint_type=self.env_settings.constraint_type,
+            )
+        )
+        lock_joint_param.append(
+            ConstraintParameters.create_locked(
+                frame_a=Frame(jnp.array([grapple_box_length, 0.0, 0.0]), rotation1),
+                frame_b=Frame(jnp.array([-bl, 0.0, 0.0]), rotation2),
+                compliance=1e-5,
+                damping=0.5 * self.reference_timestep,
+                offset=0.0,
+                name=f"lock_g1_to_dlo",
+            )
+        )
+        for i in range(0, self.env_settings.n_bodies - 1):
             self.lock_joints.append(
                 TwoBodyConstraint(
                     name=f"lock{i}",
@@ -203,24 +275,47 @@ class DLO(Environment):
                     name=f"lock{i}",
                 )
             )
+        self.lock_joints.append(
+            TwoBodyConstraint(
+                name="lock_dlo_to_g2",
+                body_a=f"body{self.env_settings.n_bodies - 1}",
+                body_b="grapple2",
+                constraint_type=self.env_settings.constraint_type,
+            )
+        )
+        lock_joint_param.append(
+            ConstraintParameters.create_locked(
+                frame_a=Frame(jnp.array([bl, 0.0, 0.0]), rotation1),
+                frame_b=Frame(jnp.array([-grapple_box_length, 0.0, 0.0]), rotation2),
+                compliance=1e-5,
+                damping=0.5 * self.reference_timestep,
+                offset=0.0,
+                name="lock_dlo_to_g2",
+            )
+        )
         self.last_lock = OneBodyConstraint(
-            name=f"lock_last",
-            body=f"body{self.env_settings.n_bodies-1}",
+            name=f"grapple2_lock",
+            body=f"grapple2",
             constraint_type=self.env_settings.constraint_type,
         )
         last_lock_param = ConstraintParameters.create_locked(
             frame_a=Frame(
-                jnp.array([bl * 2 * self.env_settings.n_bodies, 0.0, 0.0]), rotation1
+                jnp.array(
+                    [bl * 2 * self.env_settings.n_bodies + grapple_box_length, 0.0, 0.0]
+                ),
+                rotation1,
             ),
             frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), rotation2),
             compliance=1e-8,
             damping=2 * self.reference_timestep,
             offset=0.0,
-            name="lock_last",
+            name="grapple2_lock",
         )
 
-        rb_param = RigidBodyParameters.concatenate([*arms_param])
-        rigid_bodies = tuple(arms)
+        rb_param = RigidBodyParameters.concatenate(
+            [grapple1_param, *arms_param, grapple2_param]
+        )
+        rigid_bodies = tuple([grapple1, *arms, grapple2])
 
         constraint_param = ConstraintParameters.concatenate(
             [first_lock_param, *lock_joint_param, last_lock_param]
@@ -247,8 +342,19 @@ class DLO(Environment):
             "motor12", self.last_lock, 11, 11, 5
         )
 
+        # n_constraints = one per body + one
         couple_constraints = CoupleConstraints(
-            "couple_constraints", (1, self.env_settings.n_bodies)
+            "couple_constraints",
+            (1, self.env_settings.n_bodies + 3),
+            jnp.stack(
+                [
+                    jnp.arange(0, self.env_settings.n_bodies + 2),
+                    jnp.arange(1, self.env_settings.n_bodies + 3),
+                ],
+                axis=-1,
+            ),
+            jnp.arange(0, self.env_settings.n_bodies + 2)[:, None],
+            self.env_settings.constraint_type,
         )
 
         pre_step_modifiers = (
@@ -300,7 +406,8 @@ class DLO(Environment):
         )
 
         coupled_constraint_param = CoupledConstraintParameters(
-            compliance=jnp.ones(6) * 1e-5,
+            linear_stiffness=jnp.ones(6) * 1e5,
+            quadratic_stiffness=jnp.ones(6) * 0.0,
             damping=jnp.ones(6) * 2 * self.sim.settings.timestep,
             is_velocity=jnp.ones(6, dtype=bool),
         )
@@ -312,7 +419,7 @@ class DLO(Environment):
             DLOSparseParam(coupled_constraint_param),
         )
 
-        self.geometry_list = tuple([*boxes])
+        self.geometry_list = tuple([grapple1_box, *boxes, grapple2_box])
 
         self.extra_geometry = [
             geometry.Square(
@@ -334,11 +441,14 @@ class DLO(Environment):
 
         body_transforms = []
         body_transforms.append(self.first_lock.place_other(param, world_transform, 0))
-        for i in range(self.env_settings.n_bodies - 1):
+        for i in range(self.env_settings.n_bodies):
             new_transform = self.lock_joints[i].place_other(
                 0, param, body_transforms[-1], 0
             )
             body_transforms.append(new_transform)
+        body_transforms.append(
+            self.last_lock.place_other(param, body_transforms[-1], 0)
+        )
         return Configuration.concatenate(
             [body_transform.to_configuration() for body_transform in body_transforms]
         )
@@ -347,18 +457,18 @@ class DLO(Environment):
 
         initial_conf = self.observation_to_configuration(None, param)
         n_bodies = self.env_settings.n_bodies
-        initial_gvel = GeneralizedVelocity(jnp.zeros([n_bodies, 6]))
+        initial_gvel = GeneralizedVelocity(jnp.zeros([n_bodies + 2, 6]))
         targets = jnp.zeros([12])
         return DLOState(initial_conf, initial_gvel, targets)
 
     def control_help_strings(self):
         return [
-            "h/l: motor1",
-            "j/k: motor2",
-            "u/i: motor3",
-            "m/,: motor4",
-            "y/n: motor5",
-            "6/7: motor6",
+            "h/l: left/right",
+            "j/k: up/down",
+            "u/i: in/out",
+            "m/,: twist clockwise/counterclockwise",
+            "y/n: tilt up/down",
+            "6/7: tilt left/right",
         ]
 
     def control_func(self, observation, last_ozbservation, key_map):
@@ -368,31 +478,35 @@ class DLO(Environment):
         motor4 = 0.0
         motor5 = 0.0
         motor6 = 0.0
-        if key_map["l"] and key_map["h"]:
+        if (key_map["l"] and key_map["h"]) or (
+            key_map["arrow_left"] and key_map["arrow_right"]
+        ):
             motor1 = 0.0
-        elif key_map["h"]:
-            motor1 = -3.0  # -0.5
-        elif key_map["l"]:
-            motor1 = 3.0  # 0.5
+        elif key_map["h"] or key_map["arrow_left"]:
+            motor1 = 3.0  # -0.5
+        elif key_map["l"] or key_map["arrow_right"]:
+            motor1 = -3.0  # 0.5
 
-        if key_map["j"] and key_map["k"]:
-            motor2 = 0.0
-        elif key_map["j"]:
-            motor2 = -3.0
-        elif key_map["k"]:
-            motor2 = 3.0
+        if (key_map["j"] and key_map["k"]) or (
+            key_map["arrow_down"] and key_map["arrow_up"]
+        ):
+            motor3 = 0.0
+        elif key_map["j"] or key_map["arrow_down"]:
+            motor3 = -3.0
+        elif key_map["k"] or key_map["arrow_up"]:
+            motor3 = 3.0
 
         if key_map["u"] and key_map["i"]:
-            motor3 = 0.0
+            motor2 = 0.0
         elif key_map["u"]:
-            motor3 = -1.0
+            motor2 = -3.0
         elif key_map["i"]:
-            motor3 = 1.0
+            motor2 = 3.0
 
         elif key_map["m"]:
-            motor4 = -1.0
+            motor4 = -3.0
         elif key_map[","]:
-            motor4 = 1.0
+            motor4 = 3.0
 
         elif key_map["y"]:
             motor5 = -3.0
