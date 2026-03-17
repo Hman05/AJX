@@ -77,12 +77,19 @@ class OneBodyConstraint(Constraint):
         default_offset: jax.Array, target: jax.Array, constraint_type: ConstraintType
     ):
         hinge_rotational_degrees = jnp.array(
-            [0.0, 0.0, 0.0, 1.0, 1.0, 1.0], dtype=bool
+            [0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=bool
         ) * (constraint_type == ConstraintType.HINGE.value)
         prismatic_rotational_degrees = jnp.array(
             [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=bool
         ) * (constraint_type == ConstraintType.PRISMATIC.value)
-        rotational_degrees = hinge_rotational_degrees + prismatic_rotational_degrees
+        se3_rotational_degrees = jnp.array(
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=bool
+        ) * (constraint_type == ConstraintType.SE3.value)
+        rotational_degrees = (
+            hinge_rotational_degrees
+            + prismatic_rotational_degrees
+            + se3_rotational_degrees
+        )
         linear_degrees = jnp.logical_not(rotational_degrees)
 
         linear_offset = (default_offset - target) * linear_degrees
@@ -126,7 +133,7 @@ class OneBodyConstraint(Constraint):
             param.constraint_param.frame_a, constraint_id, body_a_pos, body_a_rot
         )
 
-        d_b, u_b, v_b, w_b = get_frame_transform(
+        d_b, u_b, v_b, w_b, q_b = get_frame_transform_ext(
             param.constraint_param.frame_b, constraint_id, body_b_pos, body_b_rot
         )
 
@@ -140,6 +147,8 @@ class OneBodyConstraint(Constraint):
         dot1_3 = jnp.dot(w_a, v_b)
         dot2_1 = jnp.dot(u_a, r_a - r_b)
         dot2_2 = jnp.dot(w_a, r_a - r_b)
+
+        so3_err = math.quat_residual(q_a, q_b)
 
         # TODO: Copy and paste code. Computations are done twice...
         frame_a_pos0 = param.constraint_param.frame_a.position[constraint_id]
@@ -155,9 +164,6 @@ class OneBodyConstraint(Constraint):
         # For prismatic
         r_a = body_a_pos + d_a
         r_b = body_b_pos + d_b
-        r_delta = r_a - r_b
-        v_a = math.rotation_matrix(frame_a_rot)[:, 1]
-        free_prismatic = jnp.dot(v_a, r_delta)
 
         # For hinge
         frame_a_rot_inv = math.conjugate(frame_a_rot)
@@ -172,7 +178,10 @@ class OneBodyConstraint(Constraint):
         prismatic_constraint = jnp.block(
             [co_spherical, dot1_1[None], dot1_2[None], free_hinge[None]]
         ) * (constraint_type == ConstraintType.PRISMATIC.value)
-        return hinge_constraint + prismatic_constraint
+        se3_constraint = jnp.block([co_spherical, so3_err]) * (
+            constraint_type == ConstraintType.SE3.value
+        )
+        return hinge_constraint + prismatic_constraint + se3_constraint
 
     @partial(jit, static_argnums=0)
     def jacobian(
@@ -204,21 +213,28 @@ class OneBodyConstraint(Constraint):
         d_a, u_a, v_a, w_a, q_a = get_frame_transform_ext(
             param.constraint_param.frame_a, constraint_id, body_a_pos, body_a_rot
         )
-        d_b, u_b, v_b, w_b = get_frame_transform(
+        d_b, u_b, v_b, w_b, q_b = get_frame_transform_ext(
             param.constraint_param.frame_b, constraint_id, body_b_pos, body_b_rot
         )
 
         spherical_b = jnp.block([-jnp.eye(3), math.skew(d_b)])
         dot1_1_b = jnp.block([jnp.zeros([1, 3]), -jnp.cross(u_a, v_b)])
         dot1_2_b = jnp.block([jnp.zeros([1, 3]), -jnp.cross(u_a, w_b)])
-        dot1_3_b = jnp.block([jnp.zeros([1, 3]), -jnp.cross(w_a, v_b)])
 
         R_a = math.rotation_matrix(q_a)
         co_spherical_b = jnp.block([-R_a, R_a @ math.skew(d_b)])
-        dot2_1_b = jnp.block([-u_a[None], jnp.zeros([1, 3])])
-        dot2_2_b = jnp.block([-w_a[None], jnp.zeros([1, 3])])
-        dot2_3_b = jnp.block([-v_a[None], jnp.zeros([1, 3])])
         u_a_tangent_b = jnp.block([jnp.zeros([1, 3]), -u_a])
+
+        def inc_quat_residual(inc_a, inc_b, q_a, q_b):
+            q_inc_a = math.from_rotation_vector(inc_a[3:])
+            q_inc_b = math.from_rotation_vector(inc_b[3:])
+            q_a_new = math.quat_mul(q_inc_a, q_a)
+            q_b_new = math.quat_mul(q_inc_b, q_b)
+            return math.quat_residual(q_a_new, q_b_new)
+
+        so3_err_b = jax.jacfwd(inc_quat_residual, argnums=1)(
+            jnp.zeros([6]), jnp.zeros([6]), q_a, q_b
+        )
 
         jac_hinge = jnp.concatenate(
             [spherical_b, dot1_1_b, dot1_2_b, u_a_tangent_b], axis=None
@@ -226,8 +242,11 @@ class OneBodyConstraint(Constraint):
         jac_prismatic = jnp.concatenate(
             [co_spherical_b, dot1_1_b, dot1_2_b, u_a_tangent_b], axis=None
         ) * (constraint_type == 1)
+        jac_se3 = jnp.concatenate([co_spherical_b, so3_err_b], axis=None) * (
+            constraint_type == 2
+        )
 
-        return jac_hinge + jac_prismatic
+        return jac_hinge + jac_prismatic + jac_se3
 
     @partial(jit, static_argnums=0)
     def get_free_degrees(
@@ -296,7 +315,7 @@ class OneBodyConstraint(Constraint):
         d_a = math.rotate_vector(body_transform.rot, d0_a)
         frame_a_position = body_transform.pos + d_a
         frame_a_rot = math.quat_mul(body_transform.rot, frame_a_rot0)
-        v_a = math.rotation_matrix(frame_a_rot)[:, 1]
+        u_a = math.rotation_matrix(frame_a_rot)[:, 0]
 
         # Hinge
         frame_b_rot0 = cp.frame_b.rotation[i]
@@ -310,7 +329,7 @@ class OneBodyConstraint(Constraint):
         hinge_body_b_position = frame_a_position - d_b
 
         # Prismatic
-        d_b = v_a * x
+        d_b = u_a * x
         frame_b_pos = frame_a_position - d_b
         frame_b_rot = frame_a_rot
         frame_b_rot0 = cp.frame_b.rotation[i]
@@ -323,11 +342,13 @@ class OneBodyConstraint(Constraint):
             self.constraint_type == ConstraintType.HINGE.value
         ) + prismatic_body_b_rotation * (
             self.constraint_type == ConstraintType.PRISMATIC.value
+            or self.constraint_type == ConstraintType.SE3.value
         )
         body_b_position = hinge_body_b_position * (
             self.constraint_type == ConstraintType.HINGE.value
         ) + prismatic_body_b_position * (
             self.constraint_type == ConstraintType.PRISMATIC.value
+            or self.constraint_type == ConstraintType.SE3.value
         )
 
         return Transform(body_b_position, body_b_rotation)

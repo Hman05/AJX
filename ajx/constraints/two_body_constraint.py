@@ -78,14 +78,16 @@ class TwoBodyConstraint(Constraint):
             return ("nx", "ny", "nz", "n_bend1", "n_bend2", "n_torsion")
         elif self.constraint_type == ConstraintType.PRISMATIC.value:
             return ("nu", "nw", "n_bend1", "n_torsion", "n_bend2", "nv")
-        elif self.constraint_type == ConstraintType.LOCK.value:
+        elif self.constraint_type == ConstraintType.SE3.value:
             return ("nu", "nv", "nw", "nru", "nrv", "nrw")
         return ()
 
     def compute_offset(
         default_offset: jax.Array, target: jax.Array, constraint_type: ConstraintType
     ):
-        rotational_degrees = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=bool)
+        rotational_degrees = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=bool) * (
+            constraint_type == ConstraintType.PRISMATIC.value
+        )
         linear_degrees = jnp.logical_not(rotational_degrees)
         linear_degrees = jnp.logical_not(rotational_degrees)
 
@@ -97,7 +99,7 @@ class TwoBodyConstraint(Constraint):
         return linear_offset + roational_offset
 
     # @partial(jit, static_argnums=0)
-    def func(
+    def funca(
         self,
         param: SimulationParameters,
         state: State,
@@ -131,7 +133,7 @@ class TwoBodyConstraint(Constraint):
             param.constraint_param.frame_a, constraint_id, body_a_pos, body_a_rot
         )
 
-        d_b, u_b, v_b, w_b = get_frame_transform(
+        d_b, u_b, v_b, w_b, q_b = get_frame_transform_ext(
             param.constraint_param.frame_b, constraint_id, body_b_pos, body_b_rot
         )
 
@@ -143,6 +145,8 @@ class TwoBodyConstraint(Constraint):
         co_spherical = R_a @ spherical  # math.rotate_vector(q_a, spherical)
         dot1_1 = jnp.dot(u_a, v_b)
         dot1_2 = jnp.dot(u_a, w_b)
+
+        so3_err = math.quat_residual(q_a, q_b)
 
         # TODO: Copy and paste code. Computations are done twice...
         frame_a_pos0 = param.constraint_param.frame_a.position[constraint_id]
@@ -168,7 +172,10 @@ class TwoBodyConstraint(Constraint):
         prismatic_constraint = jnp.block(
             [co_spherical, dot1_1[None], dot1_2[None], free_hinge[None]]
         ) * (constraint_type == ConstraintType.PRISMATIC.value)
-        return hinge_constraint + prismatic_constraint
+        se3_constraint = jnp.block([co_spherical, so3_err]) * (
+            constraint_type == ConstraintType.SE3.value
+        )
+        return hinge_constraint + prismatic_constraint + se3_constraint
 
     @jit
     def jacobian(
@@ -188,7 +195,7 @@ class TwoBodyConstraint(Constraint):
         d_a, u_a, v_a, w_a, q_a = get_frame_transform_ext(
             param.constraint_param.frame_a, constraint_id, body_a_pos, body_a_rot
         )
-        d_b, u_b, v_b, w_b = get_frame_transform(
+        d_b, u_b, v_b, w_b, q_b = get_frame_transform_ext(
             param.constraint_param.frame_b, constraint_id, body_b_pos, body_b_rot
         )
 
@@ -212,6 +219,20 @@ class TwoBodyConstraint(Constraint):
         u_a_tangent_a = -jnp.block([jnp.zeros([1, 3]), u_a])
         u_a_tangent_b = -jnp.block([jnp.zeros([1, 3]), -u_a])
 
+        def inc_quat_residual(inc_a, inc_b, q_a, q_b):
+            q_inc_a = math.from_rotation_vector(inc_a[3:])
+            q_inc_b = math.from_rotation_vector(inc_b[3:])
+            q_a_new = math.quat_mul(q_inc_a, q_a)
+            q_b_new = math.quat_mul(q_inc_b, q_b)
+            return math.quat_residual(q_a_new, q_b_new)
+
+        so3_err_a = jax.jacfwd(inc_quat_residual, argnums=0)(
+            jnp.zeros([6]), jnp.zeros([6]), q_a, q_b
+        )
+        so3_err_b = jax.jacfwd(inc_quat_residual, argnums=1)(
+            jnp.zeros([6]), jnp.zeros([6]), q_a, q_b
+        )
+
         jac_hinge = jnp.concatenate(
             [
                 jnp.concatenate([spherical_a, dot1_1_a, dot1_2_a, u_a_tangent_a]),
@@ -226,8 +247,15 @@ class TwoBodyConstraint(Constraint):
             ],
             axis=None,
         ) * (constraint_type == 1)
+        jac_se3 = jnp.concatenate(
+            [
+                jnp.concatenate([co_spherical_a, so3_err_a]),
+                jnp.concatenate([co_spherical_b, so3_err_b]),
+            ],
+            axis=None,
+        ) * (constraint_type == 2)
 
-        return jac_hinge + jac_prismatic
+        return jac_hinge + jac_prismatic + jac_se3
 
     # @partial(jit, static_argnums=0)
     def get_free_degrees(
