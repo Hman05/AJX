@@ -59,7 +59,9 @@ class Application(ShowBase):
 
     def create_events(self):
         keys = list("qwertyuiopasdfghjklzxcvnm,.1234567890")
-        keys.extend(["space", "shift"])
+        keys.extend(
+            ["space", "shift", "arrow_up", "arrow_down", "arrow_left", "arrow_right"]
+        )
         # keys.extend(["mouse1", "mouse2", "mouse3"])
         self.key_map = {k: False for k in keys}
 

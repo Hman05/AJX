@@ -187,12 +187,22 @@ class Furuta(Environment):
         initial_gvel = GeneralizedVelocity(jnp.zeros([2, 6]))
         return State(initial_conf, initial_gvel)
 
-    def control_func(self, observation, last_observation, key_map):
+    def control_func(self, observation, last_observation, keymap):
+        if not keymap:
+            return jnp.array([0.0])
         motor = 0.0
-        if key_map["l"] and key_map["h"]:
+        if (keymap["l"] and keymap["h"]) or (
+            keymap["arrow_left"] and keymap["arrow_right"]
+        ):
             motor = 0.0
-        elif key_map["h"]:
-            motor = -4.0  # -0.5
-        elif key_map["l"]:
-            motor = 4.0  # 0.5
+        elif keymap["h"] or keymap["arrow_left"]:
+            motor = -8.0
+        elif keymap["l"] or keymap["arrow_right"]:
+            motor = 8.0
         return jnp.array([motor])
+
+    def control_help_strings(self):
+        return [
+            "arrow right/l: move clockwise",
+            "arrow left/h: move counterclockwise",
+        ]

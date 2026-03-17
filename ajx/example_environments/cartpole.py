@@ -177,13 +177,18 @@ class CartPole(Environment):
         if not keymap:
             return jnp.array([0.0])
         motor = 0.0
-        if keymap["h"]:
+        if (keymap["l"] and keymap["h"]) or (
+            keymap["arrow_left"] and keymap["arrow_right"]
+        ):
+            motor = 0.0
+        elif keymap["h"] or keymap["arrow_left"]:
             motor = 10.0
-        elif keymap["l"]:
+        elif keymap["l"] or keymap["arrow_right"]:
             motor = -10.0
         return jnp.array([motor])
 
     def control_help_strings(self):
         return [
-            "h/l: motor",
+            "arrow right/l: move right",
+            "arrow left/h: move left",
         ]
