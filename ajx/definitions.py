@@ -30,6 +30,20 @@ class Transform(ParameterNode):
     def to_configuration(self):
         return Configuration(self.pos[None], self.rot[None])
 
+    def tangent_size(self):
+        assert len(self.pos.shape) == 1
+        assert len(self.rot.shape) == 1
+        return 6
+
+    def retract(self, delta):
+        delta_pos = delta[:3]
+        delta_rot = delta[3:]
+        quaternion_delta = math.from_rotation_vector(delta_rot)
+        new_pos = self.pos + delta_pos
+        new_rot = math.quat_mul(quaternion_delta, self.rot)
+        new_rot = math.normalize(new_rot)
+        return Transform(new_pos, new_rot)
+
 
 @struct.dataclass
 class Configuration(ParameterNode):
