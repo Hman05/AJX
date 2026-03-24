@@ -112,7 +112,9 @@ class State(ParameterNode):
     conf: Configuration
     gvel: GeneralizedVelocity
 
-    tangent_restrictions: Tuple[str] = struct.field(pytree_node=False, default=tuple())
+    tangent_restrictions: Tuple[str] = struct.field(
+        pytree_node=False, default=tuple(["conf", "gvel"])
+    )
 
 
 @struct.dataclass
