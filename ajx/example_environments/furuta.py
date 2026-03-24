@@ -25,6 +25,11 @@ class Furuta(Environment):
         if not reference_timestep:
             self.reference_timestep = sim_settings.timestep
 
+        self.camera_pos = jnp.array([0.0, 5.0, 0.0])
+        self.camera_rot = math.quat_from_axis_angle(
+            jnp.array([1.0, 0.0, 0.0]), 0.5 * jnp.pi
+        )
+
         self.control_names = ["voltage"]
         self.state_tangent_dim = 2 * 12
         self.settings = sim_settings
@@ -152,7 +157,15 @@ class Furuta(Environment):
 
         self.geometry_list = (arm1_box, arm2_box)
 
+        self.axes_frame_a = geometry.Model(
+            "axes_frame_a",
+            "axes.bam",
+            translation=-self.camera_pos,
+            rotation=self.camera_rot,
+        )
+
         self.extra_geometry = [
+            self.axes_frame_a,
             geometry.Square(
                 "ground",
                 1.0,
