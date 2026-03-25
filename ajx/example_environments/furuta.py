@@ -35,6 +35,7 @@ class Furuta(Environment):
         self.settings = sim_settings
         self._build_sim(sim_settings)
         self.dynamic_residual_names = self.get_state_residual_names()
+        self.initial_control_state = 0
 
         super().post_init()
 
@@ -200,7 +201,7 @@ class Furuta(Environment):
         initial_gvel = GeneralizedVelocity(jnp.zeros([2, 6]))
         return State(initial_conf, initial_gvel)
 
-    def control_func(self, observation, last_observation, keymap):
+    def control_func(self, observation, last_observation, keymap, control_state):
         if not keymap:
             return jnp.array([0.0])
         motor = 0.0
@@ -212,7 +213,7 @@ class Furuta(Environment):
             motor = -8.0
         elif keymap["l"] or keymap["arrow_right"]:
             motor = 8.0
-        return jnp.array([motor])
+        return jnp.array([motor]), control_state
 
     def control_help_strings(self):
         return [

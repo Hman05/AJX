@@ -22,10 +22,10 @@ if __name__ == "__main__":
             loose_end=False,
         ),
     )
-    yz_linear_stiffness = 1e5
-    x_linear_stiffness = 1e5
-    bend_linear_stiffness = 1e5
-    torsion_linear_stiffness = 1e5
+    yz_linear_stiffness = 1e4
+    x_linear_stiffness = 1e4
+    bend_linear_stiffness = 1e4
+    torsion_linear_stiffness = 1e4
 
     yz_quadratic_stiffness = 0.0
     x_quadratic_stiffness = 0.0
@@ -35,7 +35,7 @@ if __name__ == "__main__":
     env_param = environment.default_param.tree_replace(
         src={
             "sparse_param.coupled_constraint_param": {
-                "linear_stiffness": jnp.array(
+                "linear_stiffness.data": jnp.array(
                     [
                         x_linear_stiffness,
                         yz_linear_stiffness,
@@ -45,7 +45,7 @@ if __name__ == "__main__":
                         torsion_linear_stiffness,
                     ]
                 ),
-                "quadratic_stiffness": jnp.array(
+                "quadratic_stiffness.data": jnp.array(
                     [
                         x_quadratic_stiffness,
                         yz_quadratic_stiffness,
@@ -55,8 +55,13 @@ if __name__ == "__main__":
                         torsion_quadratic_stiffness,
                     ]
                 ),
-                "is_velocity": jnp.array([0, 0, 0, 0, 0, 0]),
+                "is_velocity": jnp.array([0, 0, 0, 0, 0, 0], dtype=bool),
             }
+        }
+    )
+    env_param = env_param.tree_replace(
+        {
+            f"constraint_param.is_velocity.grapple2_lock": {5: True},
         }
     )
 

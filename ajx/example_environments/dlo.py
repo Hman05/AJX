@@ -6,6 +6,7 @@ from ajx.example_environments.environment import Environment
 
 from typing import Optional
 import ajx.example_graphics.geometry as geometry
+import numpy as np
 
 
 @dataclass
@@ -24,9 +25,26 @@ class DLOState(ParameterNode):
 
 
 @struct.dataclass
+class PositiveParam(ParameterNode):
+    data: jax.Array
+
+    def retract(self, delta):
+        def clip_st(x, lo, hi):
+            clipped = jnp.clip(x, lo, hi)
+            return x + jax.lax.stop_gradient(clipped - x)
+
+        updated = self.data + delta
+        return PositiveParam(clip_st(updated, 1e-12, 1e12))
+
+    # def retract(self, delta):
+    #     new = self.data / (1 + delta * self.data)
+    #     return PositiveParam(jnp.clip(new, 1e-12, 1e12))
+
+
+@struct.dataclass
 class CoupledConstraintParameters(ParameterNode):
-    linear_stiffness: jax.Array
-    quadratic_stiffness: jax.Array
+    linear_stiffness: PositiveParam
+    quadratic_stiffness: PositiveParam
     damping: jax.Array
     is_velocity: jax.Array
 
@@ -34,7 +52,7 @@ class CoupledConstraintParameters(ParameterNode):
 DLOSparseParam = create_parameter_node("DLOSparseParam", ("coupled_constraint_param",))
 
 
-@struct.dataclass
+@dataclass
 class NonlinearUpdate(PreStepModifier):
     name: str
     target: str
@@ -45,12 +63,12 @@ class NonlinearUpdate(PreStepModifier):
         return state, new_param
 
 
-@struct.dataclass
+@dataclass
 class CoupleConstraints(PreStepModifier):
     name: str
-    target_slice: Tuple[int, int]
-    body_ids: Tuple[int, int]
-    constraint_ids: int
+    target_slice: Tuple
+    body_ids: jax.Array
+    constraint_ids: jax.Array
     constraint_type: ConstraintType
 
     def update_params(self, state: DLOState, u: jax.Array, param: SimulationParameters):
@@ -59,10 +77,18 @@ class CoupleConstraints(PreStepModifier):
         slice_end = self.target_slice[1]
         constraint_param = param.constraint_param
         offsets = vmap(TwoBodyConstraint.func, in_axes=(None, None, 0, 0, None))(
-            param, state, self.body_ids, self.constraint_ids, self.constraint_type
+            param,
+            state,
+            self.body_ids,
+            self.constraint_ids,
+            self.constraint_type,
         )
         compliance = jnp.clip(
-            1 / (ccp.linear_stiffness + jnp.abs(offsets) * ccp.quadratic_stiffness),
+            1
+            / (
+                ccp.linear_stiffness.data
+                + jnp.abs(offsets) * ccp.quadratic_stiffness.data
+            ),
             1e-6,
             1e8,
         )
@@ -89,7 +115,7 @@ class LockAtZeroSpeedMotor(PreStepModifier):
     constraint: Constraint
     u_idx: int
     lock_idx: int
-    target_dof: int = 5
+    target_dof: int
 
     def update_params(self, state: DLOState, u, param: SimulationParameters):
         lock = u[self.u_idx] == 0.0
@@ -102,14 +128,15 @@ class LockAtZeroSpeedMotor(PreStepModifier):
         state = state.replace(
             lock_targets=state.lock_targets.at[self.lock_idx].set(new_lock_target)
         )
+        param_w_is_velocity = param.tree_replace(
+            {
+                f"constraint_param.is_velocity.{self.constraint.name}": {
+                    self.target_dof: not_lock
+                },
+            }
+        )
         return state, (
-            param.tree_replace(
-                {
-                    f"constraint_param.is_velocity.{self.constraint.name}": {
-                        self.target_dof: not_lock
-                    },
-                }
-            ).tree_replace(
+            param_w_is_velocity.tree_replace(
                 {
                     f"constraint_param.target.{self.constraint.name}": {
                         self.target_dof: target
@@ -141,6 +168,7 @@ class DLO(Environment):
             [self.env_settings.body_length * self.env_settings.n_bodies, 15.0, 0.0]
         )
         self.camera_rot = math.quat_from_axis_angle(jnp.array([0.0, 0.0, 1.0]), jnp.pi)
+        self.initial_control_state = (False, False)
 
         super().post_init()
 
@@ -251,7 +279,7 @@ class DLO(Environment):
                 frame_a=Frame(jnp.array([grapple_box_length, 0.0, 0.0]), rotation1),
                 frame_b=Frame(jnp.array([-bl, 0.0, 0.0]), rotation2),
                 compliance=1e-5,
-                damping=0.5 * self.reference_timestep,
+                damping=2 * self.reference_timestep,
                 offset=0.0,
                 name=f"lock_g1_to_dlo",
             )
@@ -270,7 +298,7 @@ class DLO(Environment):
                     frame_a=Frame(jnp.array([bl, 0.0, 0.0]), rotation1),
                     frame_b=Frame(jnp.array([-bl, 0.0, 0.0]), rotation2),
                     compliance=1e-5,
-                    damping=0.5 * self.reference_timestep,
+                    damping=2 * self.reference_timestep,
                     offset=0.0,
                     name=f"lock{i}",
                 )
@@ -288,7 +316,7 @@ class DLO(Environment):
                 frame_a=Frame(jnp.array([bl, 0.0, 0.0]), rotation1),
                 frame_b=Frame(jnp.array([-grapple_box_length, 0.0, 0.0]), rotation2),
                 compliance=1e-5,
-                damping=0.5 * self.reference_timestep,
+                damping=2 * self.reference_timestep,
                 offset=0.0,
                 name="lock_dlo_to_g2",
             )
@@ -343,18 +371,19 @@ class DLO(Environment):
         )
 
         # n_constraints = one per body + one
+        n_segment_locks = self.env_settings.n_bodies + 1
         couple_constraints = CoupleConstraints(
             "couple_constraints",
-            (1, self.env_settings.n_bodies + 3),
-            jnp.stack(
+            target_slice=(1, n_segment_locks + 1),
+            body_ids=jnp.stack(
                 [
-                    jnp.arange(0, self.env_settings.n_bodies + 2),
-                    jnp.arange(1, self.env_settings.n_bodies + 3),
+                    jnp.arange(0, n_segment_locks),
+                    jnp.arange(1, n_segment_locks + 1),
                 ],
                 axis=-1,
             ),
-            jnp.arange(0, self.env_settings.n_bodies + 2)[:, None],
-            self.env_settings.constraint_type,
+            constraint_ids=jnp.arange(0, n_segment_locks)[:, None],
+            constraint_type=self.env_settings.constraint_type,
         )
 
         pre_step_modifiers = (
@@ -383,7 +412,7 @@ class DLO(Environment):
         # point_set = [(i, offset) for offset in offsets for i in range(n)]
         temp_limit = 1
         point_set = [
-            (i, offset) for i in range(max(n, temp_limit)) for offset in offsets
+            (i + 1, offset) for i in range(max(n, temp_limit)) for offset in offsets
         ]
         # point_set5 = [(i, jnp.array([-bl, 0.1, 0.1])) for i in range(n)]
         # point_set6 = [(i, jnp.array([-bl, 0.1, -0.1])) for i in range(n)]
@@ -406,10 +435,11 @@ class DLO(Environment):
         )
 
         coupled_constraint_param = CoupledConstraintParameters(
-            linear_stiffness=jnp.ones(6) * 1e5,
-            quadratic_stiffness=jnp.ones(6) * 0.0,
+            linear_stiffness=PositiveParam(jnp.ones(6) * 1e5),
+            compliance=jnp.ones(6) * 1e-5,
+            quadratic_stiffness=PositiveParam(jnp.ones(6) * 0.0),
             damping=jnp.ones(6) * 2 * self.sim.settings.timestep,
-            is_velocity=jnp.ones(6, dtype=bool),
+            is_velocity=jnp.zeros(6, dtype=bool),
         )
 
         self.default_param = SimulationParameters(
@@ -446,9 +476,7 @@ class DLO(Environment):
                 0, param, body_transforms[-1], 0
             )
             body_transforms.append(new_transform)
-        body_transforms.append(
-            self.last_lock.place_other(param, body_transforms[-1], 0)
-        )
+        body_transforms.append(self.last_lock.place_other(param, world_transform, 0))
         return Configuration.concatenate(
             [body_transform.to_configuration() for body_transform in body_transforms]
         )
@@ -469,9 +497,10 @@ class DLO(Environment):
             "m/,: twist clockwise/counterclockwise",
             "y/n: tilt up/down",
             "6/7: tilt left/right",
+            "8: hold to shift control target",
         ]
 
-    def control_func(self, observation, last_ozbservation, key_map):
+    def control_func(self, observation, last_observation, key_map, control_state):
         motor1 = 0.0
         motor2 = 0.0
         motor3 = 0.0
@@ -517,8 +546,22 @@ class DLO(Environment):
             motor6 = -3.0
         elif key_map["7"]:
             motor6 = 3.0
-        motor7 = 0.0
-        return jnp.array([motor1, motor2, motor3, motor4, motor5, motor6, motor7])
+        motor1_to_6 = jnp.array([motor1, motor2, motor3, motor4, motor5, motor6])
+        motor7_to_12 = jnp.zeros([6])
+
+        control_first = control_state[0]
+        switch_is_down = control_state[1]
+        if key_map["8"] and not switch_is_down:
+            switch_is_down = True
+            control_first = not control_first
+        if not key_map["8"] and switch_is_down:
+            switch_is_down = False
+        if control_first:
+            motor_1_to_12 = jnp.concatenate([motor1_to_6, motor7_to_12])
+        else:
+            motor_1_to_12 = jnp.concatenate([motor7_to_12, motor1_to_6])
+        control_state = (control_first, switch_is_down)
+        return motor_1_to_12, control_state
 
 
 # ui (right-left)

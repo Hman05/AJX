@@ -21,6 +21,7 @@ class CartPole(Environment):
 
         self.camera_pos = jnp.array([0.0, 30.0, 0.0])
         self.camera_rot = math.quat_from_axis_angle(jnp.array([0.0, 0.0, 1.0]), 0.0)
+        self.initial_control_state = None
 
         super().post_init()
 
@@ -173,7 +174,7 @@ class CartPole(Environment):
         initial_gvel = GeneralizedVelocity(jnp.zeros([2, 6]))
         return State(initial_conf, initial_gvel)
 
-    def control_func(self, observation, last_observation, keymap):
+    def control_func(self, observation, last_observation, keymap, control_state):
         if not keymap:
             return jnp.array([0.0])
         motor = 0.0
@@ -185,7 +186,7 @@ class CartPole(Environment):
             motor = 10.0
         elif keymap["l"] or keymap["arrow_right"]:
             motor = -10.0
-        return jnp.array([motor])
+        return jnp.array([motor]), control_state
 
     def control_help_strings(self):
         return [

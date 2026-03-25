@@ -134,8 +134,18 @@ class ParameterNode:
             if isinstance(value, ParameterNode)
         ]
         array_attributes = [
-            key for key, value in self.__dict__.items() if isinstance(value, jax.Array)
+            key
+            for key, value in self.__dict__.items()
+            if isinstance(value, (jax.Array, float))
         ]
+
+        try:
+            src = dict(src)
+        except (TypeError, ValueError) as e:
+            raise TypeError(
+                "src must be a mapping or iterable of (key, value) pairs "
+                f"convertible to dict, got {type(src).__name__}"
+            ) from e
 
         new = self.copy()
         for src_key, src_val in src.items():
@@ -159,22 +169,22 @@ class ParameterNode:
                     "The provided source does not index existing attributes"
                 )
             if key in parameter_node_attibutes:
+                if isinstance(val, ParameterNode):
+                    new.__dict__[key] = val
+                    continue
+                try:
+                    val = dict(val)
+                except (TypeError, ValueError):
+                    pass
+
                 if isinstance(val, dict):
                     new.__dict__[key] = new.__dict__[key].tree_replace(val)
-                elif isinstance(val, ParameterNode):
-                    from loguru import logger
-
-                    global global_flag
-                    if not global_flag:
-                        logger.warning("Using a fix that may cause problems(?)")
-                        global_flag = True
-                    new.__dict__[key] = val
                 elif val is None:
                     continue
                 else:
                     raise ValueError("Unsupported type")
             if key in array_attributes:
-                if isinstance(val, jax.Array):
+                if isinstance(val, (jax.Array, float)):
                     new.__dict__[key] = val
                 elif isinstance(val, dict):
                     # Arrays are be indexed by names
@@ -598,3 +608,15 @@ def flatten_dict_paths(parameter_tree):
         return
 
     return dict(_iter_leaf_paths(parameter_tree))
+
+
+def tangent_jacfwd(func, argnum=0, has_aux=False):
+    def transformed_func(*x):
+        zero_tangent = jnp.zeros([x[argnum].tangent_size()])
+
+        def func_inc(inc, x):
+            return func(*x[:argnum], x[argnum].retract(inc), *x[argnum + 1 :])
+
+        return jax.jacfwd(func_inc, has_aux=has_aux)(zero_tangent, x)
+
+    return transformed_func

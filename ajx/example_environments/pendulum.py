@@ -25,6 +25,7 @@ class Pendulum(Environment):
         self._build_sim(sim_settings)
         self.dynamic_residual_names = self.get_state_residual_names()
         self.control_names = []
+        self.initial_control_state = None
 
         super().post_init()
 
@@ -136,3 +137,6 @@ class Pendulum(Environment):
             Configuration(conf_pos, conf_rot),
             GeneralizedVelocity(gvel),
         )
+
+    def control_func(self, observation, last_observation, key_map, control_state):
+        return jnp.array([0.0]), control_state

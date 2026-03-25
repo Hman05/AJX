@@ -49,6 +49,7 @@ class EnvironmentScene:
         self.environment = env
         self.env_param = env_param
         self.initial_state = initial_state
+        self.control_state = env.initial_control_state
 
         self.step = jit(env.step)
         self.observe = jit(env.observe_state)
@@ -327,8 +328,8 @@ class EnvironmentScene:
                 geo_dict[g_name].node.setPosQuat(Vec3(*pos), q)
 
     def pre_update(self, key_map):
-        self.u = self.environment.control_func(
-            self.observation, self.last_observation, key_map
+        self.u, self.control_state = self.environment.control_func(
+            self.observation, self.last_observation, key_map, self.control_state
         )
 
     def update_physics(self):

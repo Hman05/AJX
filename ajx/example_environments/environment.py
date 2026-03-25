@@ -44,6 +44,13 @@ class Environment(ABC):
         new_state = self.sim.post_step(state, qdot_next)
         return new_state, observation
 
+    def step_state(self, state, action, param):
+        state, ((qdot_next, multipliers), code) = self.sim.pre_step(
+            state, action, param
+        )
+        new_state = self.sim.post_step(state, qdot_next)
+        return new_state
+
     def get_multiplier_names(self):
         return [
             item
