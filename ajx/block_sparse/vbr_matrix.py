@@ -6,6 +6,21 @@ from ajx.block_sparse.base import BlockMatrixBase
 from typing import List, Dict, Tuple
 from itertools import combinations_with_replacement, product, accumulate
 from jax.tree_util import register_pytree_node_class
+import numpy as np
+
+from flax import struct
+from jax import lax
+
+
+@struct.dataclass
+class RowGroup:
+    offset: int
+    row_size: int
+    n_blocks: int
+    col_sizes: jax.Array
+    col_indices: jax.Array
+    col_offsets: jax.Array
+    col_sq_offsets: jax.Array
 
 
 @register_pytree_node_class
@@ -19,6 +34,7 @@ class VBRMatrix(BlockMatrixBase):
         row_ptr: Tuple[int],
         row_sizes: Tuple[int],
         col_sizes: Tuple[int],
+        temp=None,
     ):
         self.data = data
         self.col_indices = col_indices
@@ -28,8 +44,88 @@ class VBRMatrix(BlockMatrixBase):
 
         self.row_begin_indices = list(accumulate([0, *row_sizes]))
         self.col_begin_indices = list(accumulate([0, *col_sizes]))
+        max_block_size = 10
+        assert np.all(self.col_sizes < max_block_size)
 
-        pass
+        # Compute grouping?
+        col_sizes_per_row = np.split(
+            self.col_sizes[self.col_indices], self.row_ptr[1:-1]
+        )
+
+        col_sizes_hash = np.array(
+            [
+                np.sum(sizes * max_block_size ** np.arange(len(sizes)))
+                for sizes in col_sizes_per_row
+            ]
+        )
+        row_shapes = np.stack([self.row_sizes, col_sizes_hash])
+        diff = np.diff(row_shapes, prepend=row_shapes[:, :1] - 1)
+        change_idx = np.sum(diff**2, axis=0) != 0
+        run_starts = np.flatnonzero(change_idx)
+        run_lengths = np.diff(np.append(run_starts, row_shapes.shape[1]))
+
+        col_sizes_in_groups = [col_sizes_per_row[run_start] for run_start in run_starts]
+        row_sizes_in_groups = self.row_sizes[run_starts]
+
+        group_sizes = [
+            l * r * np.sum(c)
+            for l, r, c in zip(run_lengths, row_sizes_in_groups, col_sizes_in_groups)
+        ]
+        offsets = np.concatenate(([0], np.cumsum(group_sizes)[:-1]))
+        col_offsets = np.concatenate(([0], np.cumsum(self.col_sizes)[:-1]))
+        col_sq_offsets = np.concatenate(([0], np.cumsum(self.col_sizes**2)[:-1]))
+
+        n_blocks_per_group = (np.array(self.row_ptr)[1:] - np.array(row_ptr)[:-1])[
+            run_starts
+        ]
+
+        col_indices_per_group = np.split(
+            self.col_indices, np.array(self.row_ptr[:-1])[run_starts]
+        )[1:]
+
+        col_offsets_per_group = np.split(
+            col_offsets[self.col_indices], np.array(self.row_ptr[:-1])[run_starts]
+        )[1:]
+
+        col_sq_offsets_per_group = np.split(
+            col_sq_offsets[self.col_indices], np.array(self.row_ptr[:-1])[run_starts]
+        )[1:]
+
+        col_indices_in_groups = [
+            c.reshape(-1, b) for b, c in zip(n_blocks_per_group, col_indices_per_group)
+        ]
+        col_offsets_in_group = [
+            c.reshape(-1, b) for b, c in zip(n_blocks_per_group, col_offsets_per_group)
+        ]
+        col_sq_offsets_in_group = [
+            c.reshape(-1, b)
+            for b, c in zip(n_blocks_per_group, col_sq_offsets_per_group)
+        ]
+
+        self.groups = [
+            (l.item(), RowGroup(o, r, n, c, id, cof, csqof))
+            for l, o, r, n, c, id, cof, csqof in zip(
+                run_lengths,
+                offsets,
+                row_sizes_in_groups,
+                n_blocks_per_group,
+                col_sizes_in_groups,
+                col_indices_in_groups,
+                col_offsets_in_group,
+                col_sq_offsets_in_group,
+            )
+        ]
+
+    def get_row_from_group(self, group_offset, group_id, row_size, col_sizes):
+        local_offset = row_size * np.sum(col_sizes) * group_id
+        matrices = []
+        for col_size in col_sizes:
+            mat = lax.dynamic_slice(
+                self.data, (group_offset + local_offset,), (col_size * row_size).item()
+            ).reshape(row_size, col_size)
+            local_offset += row_size * col_size
+            matrices.append(mat)
+        return matrices
 
     @property
     def n_rows(self):
