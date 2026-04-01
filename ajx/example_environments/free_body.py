@@ -14,7 +14,8 @@ class FreeBody(Environment):
 
         self.timestep = sim_settings.timestep
         self.state_tangent_dim = 12 * 2
-        self.settings = sim_settings
+        self.sim_settings = sim_settings
+        self.env_settings = None
         self._build_sim(sim_settings)
         self.dynamic_residual_names = self.get_state_residual_names()
         self.control_names = []

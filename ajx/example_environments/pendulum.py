@@ -20,7 +20,8 @@ class Pendulum(Environment):
         self.has_quadratic_damping = has_quadratic_damping
         self.timestep = sim_settings.timestep
         self.state_tangent_dim = 12
-        self.settings = sim_settings
+        self.sim_settings = sim_settings
+        self.env_settings = has_quadratic_damping
 
         self._build_sim(sim_settings)
         self.dynamic_residual_names = self.get_state_residual_names()
