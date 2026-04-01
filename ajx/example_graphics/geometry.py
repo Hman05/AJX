@@ -281,7 +281,9 @@ def makeCuboid(game, x1, y1, z1, x2, y2, z2, c=[1.0, 1.0, 1.0], name=""):
 
 
 class Model:
-    def __init__(self, name, model_path, translation=None, rotation=None, scale=None):
+    def __init__(
+        self, name, model_path, translation=None, rotation=None, scale=None, color=None
+    ):
         self.name = name
         if translation is not None:
             self.translation = translation
@@ -297,6 +299,10 @@ class Model:
             self.scale = scale
         else:
             self.scale = (1.0, 1.0, 1.0)
+        if color is not None:
+            self.color = color
+        else:
+            self.color = (1.0, 1.0, 1.0)
         self.node = None
         self.model_path = model_path
 
@@ -308,6 +314,7 @@ class Model:
         model.setPos(*self.translation)
         model.setHpr(*self.rotation)
         model.setScale(*self.scale)
+        model.setColor(self.color[0], self.color[1], self.color[2], 1.0)
 
     def update_node(self, pos, rot):
         self.node.setPos(*pos)
