@@ -62,7 +62,6 @@ def normalize(quat: jax.Array) -> jax.Array:
     return quat / jnp.linalg.norm(quat)
 
 
-@jit
 def quat_from_axis_angle(normalized_axis: jax.Array, angle: jax.Array) -> jax.Array:
     """
     Get quaternion rotation from a scaled axis angle rotation.
@@ -207,5 +206,5 @@ def to_rotation_vector_jvp(primal, tangent):
     n_dot = (qv_dot - 0.5 * n * q_s * gamma_dot) / (jnp.dot(q_v, n) + eps)
     theta_dot_large = gamma_dot * n + gamma * n_dot
     theta_dot_small = 2 * qv_dot
-    theta_dot = theta_dot_small * (gamma < 1e-8) + theta_dot_large * (gamma >= 1e-8)
+    theta_dot = jnp.where(gamma < 1e-8, theta_dot_small, theta_dot_large)
     return primal_out, theta_dot
