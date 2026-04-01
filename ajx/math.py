@@ -208,3 +208,12 @@ def to_rotation_vector_jvp(primal, tangent):
     theta_dot_small = 2 * qv_dot
     theta_dot = jnp.where(gamma < 1e-8, theta_dot_small, theta_dot_large)
     return primal_out, theta_dot
+
+
+class Rotations:
+    z_to_y = quat_from_axis_angle(jnp.array([1.0, 0.0, 0.0]), 0.5 * jnp.pi)
+    y_to_z = quat_from_axis_angle(jnp.array([1.0, 0.0, 0.0]), -0.5 * jnp.pi)
+    x_to_z = quat_from_axis_angle(jnp.array([0.0, 1.0, 0.0]), 0.5 * jnp.pi)
+    z_to_x = quat_from_axis_angle(jnp.array([0.0, 1.0, 0.0]), -0.5 * jnp.pi)
+    y_to_x = quat_from_axis_angle(jnp.array([0.0, 0.0, 1.0]), 0.5 * jnp.pi)
+    x_to_y = quat_from_axis_angle(jnp.array([0.0, 0.0, 1.0]), -0.5 * jnp.pi)
