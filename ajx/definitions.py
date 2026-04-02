@@ -49,6 +49,12 @@ class Transform(ParameterNode):
         pos_delta = self.pos - other.pos
         return jnp.concatenate([pos_delta, rot_delta], axis=None)
 
+    def get_relative(self, other: Transform):
+        """Get this transform as seen from other"""
+        rot_diff = math.quat_mul(self.rot, math.conjugate(other.rot))
+        pos_diff = self.pos - other.pos
+        return Transform(pos_diff, rot_diff)
+
 
 @struct.dataclass
 class Configuration(ParameterNode):
@@ -145,7 +151,8 @@ class ConstraintParameters(ParameterNode):
     # Dynamic
     frame_a: Frames
     frame_b: Frames
-    compliance: jax.Array  # Viscous compliance for velocity constrained dofs
+    compliance: jax.Array
+    viscous_compliance: jax.Array
     damping: jax.Array  # Ignored for velocity constrained dofs
     target: jax.Array  # Target velocity for velocity constrained dofs
     is_velocity: jax.Array  # Bools set to true for velocity constrained dofs
@@ -174,47 +181,11 @@ class ConstraintParameters(ParameterNode):
             frame_a=frame_a.to_frames(),
             frame_b=frame_b.to_frames(),
             compliance=compliance,
+            viscous_compliance=compliance,
             damping=damping,
             target=target,
             is_velocity=is_velocity,
         )
-
-    # @classmethod
-    # def create_w_shaft(
-    #     cls,
-    #     frame_a: Frame,
-    #     frame_b: Frame,
-    #     compliance: float,
-    #     damping: float,
-    #     b: float,
-    #     name: str,
-    # ):
-    #     holonomic_compliance = jnp.array([compliance] * 5)[None]
-    #     shaft_compliance = jnp.array([compliance])[None]
-    #     holonomic_damping = jnp.array([damping] * 5)[None]
-    #     viscous_compliance = jnp.array([1.0 / b])[None]
-    #     ignored_damping = jnp.array([damping])[None]
-    #     shaft_damping = jnp.array([damping])[None]
-    #     target = jnp.zeros(6)[None]
-    #     compliance = jnp.concatenate(
-    #         [holonomic_compliance, viscous_compliance, shaft_compliance], axis=1
-    #     )
-    #     damping = jnp.concatenate(
-    #         [holonomic_damping, ignored_damping, shaft_damping], axis=1
-    #     )
-    #     is_velocity = jnp.array(
-    #         [False, False, False, False, False, True, False], dtype=bool
-    #     )[None]
-    #     names = (name,)
-    #     return cls(
-    #         names,
-    #         frame_a=frame_a.to_frames(),
-    #         frame_b=frame_b.to_frames(),
-    #         compliance=compliance,
-    #         damping=damping,
-    #         target=target,
-    #         is_velocity=is_velocity,
-    #     )
 
     @classmethod
     def create_empty(cls):
@@ -223,22 +194,33 @@ class ConstraintParameters(ParameterNode):
             frame_a=Frames(jnp.array([0, 3]), jnp.array([0, 4])),
             frame_b=Frames(jnp.array([0, 3]), jnp.array([0, 4])),
             compliance=jnp.array([0, 6]),
+            viscous_compliance=jnp.array([0, 6]),
             damping=jnp.array([0, 6]),
             target=jnp.array([0, 6]),
             is_velocity=jnp.array([0, 6]),
         )
 
     @classmethod
-    def create_locked(
+    def create_locked_ext(
         cls,
         frame_a: Frame,
         frame_b: Frame,
-        compliance: float,
+        compliance_lin: float,
+        compliance_rot: float,
+        viscous_compliance_lin: float,
+        viscous_compliance_rot: float,
         damping: float,
         offset: float,
         name: str,
     ):
-        compliance = jnp.array([compliance] * 6)[None]
+        compliance_lin = jnp.array([compliance_lin] * 3)[None]
+        compliance_rot = jnp.array([compliance_rot] * 3)[None]
+        compliance = jnp.concatenate([compliance_lin, compliance_rot], axis=-1)
+        viscous_compliance_lin = jnp.array([viscous_compliance_lin] * 3)[None]
+        viscous_compliance_rot = jnp.array([viscous_compliance_rot] * 3)[None]
+        viscous_compliance = jnp.concatenate(
+            [viscous_compliance_lin, viscous_compliance_rot], axis=-1
+        )
         damping = jnp.array([damping] * 6)[None]
         target = jnp.zeros(5)[None]
         offset = jnp.array([offset])[None]
@@ -253,6 +235,40 @@ class ConstraintParameters(ParameterNode):
             frame_a=frame_a.to_frames(),
             frame_b=frame_b.to_frames(),
             compliance=compliance,
+            viscous_compliance=viscous_compliance,
+            damping=damping,
+            target=target,
+            is_velocity=is_velocity,
+        )
+
+    @classmethod
+    def create_locked(
+        cls,
+        frame_a: Frame,
+        frame_b: Frame,
+        compliance: float,
+        viscous_compliance: float,
+        damping: float,
+        offset: float,
+        name: str,
+    ):
+        compliance = jnp.array([compliance] * 6)[None]
+        viscous_compliance = jnp.array([viscous_compliance] * 6)[None]
+        damping = jnp.array([damping] * 6)[None]
+        target = jnp.zeros(5)[None]
+        offset = jnp.array([offset])[None]
+        target = jnp.concatenate([target, offset], axis=1)
+
+        is_velocity = jnp.array([False, False, False, False, False, False], dtype=bool)[
+            None
+        ]
+        names = (name,)
+        return cls(
+            names,
+            frame_a=frame_a.to_frames(),
+            frame_b=frame_b.to_frames(),
+            compliance=compliance,
+            viscous_compliance=viscous_compliance,
             damping=damping,
             target=target,
             is_velocity=is_velocity,

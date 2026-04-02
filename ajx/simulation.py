@@ -556,7 +556,7 @@ class Simulation:
             tau = constraint_param.damping[idx_slice]
             epsilon = constraint_param.compliance[idx_slice]
             target = constraint_param.target[idx_slice]
-            viscous_compliance = epsilon
+            viscous_compliance = constraint_param.viscous_compliance[idx_slice]
             alpha = 1 / (1 + 4 * tau * self.h_inv)
             holonomic_regularization = 4 * epsilon * self.h_inv**2 * alpha
             nonholonomic_regularization = viscous_compliance * self.h_inv
