@@ -257,10 +257,13 @@ class DLO(Environment):
             constraint_type=ConstraintType.SE3.value,
         )
         bl = self.env_settings.body_length
-        first_lock_param = ConstraintParameters.create_locked(
+        first_lock_param = ConstraintParameters.create_locked_ext(
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), rotation1),
             frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), rotation2),
-            compliance=1e-8,
+            compliance_lin=1e-5,
+            compliance_rot=1e-5,
+            viscous_compliance_lin=1e-3,
+            viscous_compliance_rot=1e-2,
             damping=2 * self.reference_timestep,
             offset=0.0,
             name="grapple1_lock",
@@ -279,6 +282,7 @@ class DLO(Environment):
                 frame_a=Frame(jnp.array([grapple_box_length, 0.0, 0.0]), rotation1),
                 frame_b=Frame(jnp.array([-bl, 0.0, 0.0]), rotation2),
                 compliance=1e-5,
+                viscous_compliance=1e-5,
                 damping=2 * self.reference_timestep,
                 offset=0.0,
                 name=f"lock_g1_to_dlo",
@@ -298,6 +302,7 @@ class DLO(Environment):
                     frame_a=Frame(jnp.array([bl, 0.0, 0.0]), rotation1),
                     frame_b=Frame(jnp.array([-bl, 0.0, 0.0]), rotation2),
                     compliance=1e-5,
+                    viscous_compliance=1e-5,
                     damping=2 * self.reference_timestep,
                     offset=0.0,
                     name=f"lock{i}",
@@ -316,6 +321,7 @@ class DLO(Environment):
                 frame_a=Frame(jnp.array([bl, 0.0, 0.0]), rotation1),
                 frame_b=Frame(jnp.array([-grapple_box_length, 0.0, 0.0]), rotation2),
                 compliance=1e-5,
+                viscous_compliance=1e-5,
                 damping=2 * self.reference_timestep,
                 offset=0.0,
                 name="lock_dlo_to_g2",
@@ -326,7 +332,7 @@ class DLO(Environment):
             body=f"grapple2",
             constraint_type=self.env_settings.constraint_type,
         )
-        last_lock_param = ConstraintParameters.create_locked(
+        last_lock_param = ConstraintParameters.create_locked_ext(
             frame_a=Frame(
                 jnp.array(
                     [bl * 2 * self.env_settings.n_bodies + grapple_box_length, 0.0, 0.0]
@@ -334,7 +340,10 @@ class DLO(Environment):
                 rotation1,
             ),
             frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), rotation2),
-            compliance=1e-8,
+            compliance_lin=1e-5,
+            compliance_rot=1e-5,
+            viscous_compliance_lin=1e-3,
+            viscous_compliance_rot=1e-2,
             damping=2 * self.reference_timestep,
             offset=0.0,
             name="grapple2_lock",
