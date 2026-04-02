@@ -159,15 +159,7 @@ class Furuta(Environment):
 
         self.geometry_list = (arm1_box, arm2_box)
 
-        self.axes_frame_a = geometry.Model(
-            "axes_frame_a",
-            "axes.bam",
-            translation=-self.camera_pos,
-            rotation=self.camera_rot,
-        )
-
         self.extra_geometry = [
-            self.axes_frame_a,
             geometry.Square(
                 "ground",
                 1.0,
