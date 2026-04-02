@@ -9,22 +9,25 @@ from ajx.constraints import ConstraintType
 from ajx.example_environments.dlo import DLO, DLOSettings
 from ajx.simulation import SimulationSettings, Solver
 import jax.numpy as jnp
+import ajx.math as math
 
 if __name__ == "__main__":
     timestep = 0.016667
 
     environment = DLO(
         sim_settings=SimulationSettings(timestep, True, Solver.DENSE_LINEAR),
-        env_settings=DLOSettings(
-            n_bodies=100,
-            body_length=0.02,
+        env_settings=DLOSettings.create(
+            n_segments=50,
+            length=0.6,
             constraint_type=ConstraintType.SE3.value,
+            observation_type="pose",
+            pose_estimates_at=[0.10, 0.20, 0.30, 0.40, 0.50],
             loose_end=False,
         ),
     )
-    yz_linear_stiffness = 1e4
-    x_linear_stiffness = 1e4
-    bend_linear_stiffness = 1e4
+    yz_linear_stiffness = 1e6
+    x_linear_stiffness = 1e6
+    bend_linear_stiffness = 1e2
     torsion_linear_stiffness = 1e4
 
     yz_quadratic_stiffness = 0.0
@@ -61,12 +64,11 @@ if __name__ == "__main__":
     )
     env_param = env_param.tree_replace(
         {
-            f"constraint_param.is_velocity.grapple2_lock": {5: True},
+            f"constraint_param.is_velocity.grip_tool2_lock": {5: True},
         }
     )
 
-    initial_state = environment.state_from_angles(env_param)
-    environment.lock_joints[1].get_free_degrees(initial_state, env_param)
+    initial_state = environment.get_neutral_state(env_param)
 
     scene = EnvironmentScene(environment, env_param, initial_state)
     app = Application(scene, 60, "default")
