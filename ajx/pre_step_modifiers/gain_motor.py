@@ -25,7 +25,7 @@ class GainMotorParameters(ParameterNode):
     gain: float
 
 
-class GainMotor2(PreStepModifier):
+class GainMotor(PreStepModifier):
     def __init__(
         self, name: str, constraint, timestep: float, idx: int, target_dof: int
     ):
@@ -66,7 +66,7 @@ class GainMotor2(PreStepModifier):
             {
                 "constraint_param": {
                     "target": {self.constraint.name: {self.target_dof: speed}},
-                    "compliance": {
+                    "viscous_compliance": {
                         self.constraint.name: {
                             self.target_dof: self.timestep
                             / sparse_dict_param[self.name].inertia

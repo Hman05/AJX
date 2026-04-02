@@ -81,7 +81,7 @@ class Furuta(Environment):
         rotation3 = rotation2
 
         electric_motor_param = GainMotorParameters(0.0004, 7.5)  # 0.00265, 0.0039
-        electric_motor = GainMotor2(
+        electric_motor = GainMotor(
             "electric_motor", self.hinge1, sim_settings.timestep, 0, 5
         )
         # self.electric_motor = TargetSpeedMotor("electric_motor", "hinge1_motor", 0)

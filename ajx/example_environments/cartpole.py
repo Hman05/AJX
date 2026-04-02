@@ -64,7 +64,7 @@ class CartPole(Environment):
             constraint_type=ConstraintType.PRISMATIC.value,
         )
         motor_param = GainMotorParameters(0.04, 20.0)
-        motor = GainMotor2("motor", self.prismatic, sim_settings.timestep, 0, 0)
+        motor = GainMotor("motor", self.prismatic, sim_settings.timestep, 0, 0)
         # prismatic_direction1 = math.quat_from_axis_angle(
         #     jnp.array([0.0, 0.0, 1.0]), jnp.pi / 2
         # )
