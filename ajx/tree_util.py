@@ -213,6 +213,8 @@ class ParameterNode:
         for key in keys:
             value = self.get_value_at_path(key)
 
+            if isinstance(value, float):
+                value = jnp.array(value)
             if isinstance(value, jax.Array):
                 slice_size = value.size
                 slice_end = slice_begin + slice_size
@@ -287,13 +289,13 @@ class ParameterNode:
             if key in parameter_node_attibutes:
                 if isinstance(val, dict):
                     new.__dict__[key] = self.__dict__[key].tree_retract(val)
-                elif isinstance(val, jax.Array):
+                elif isinstance(val, (jax.Array, float)):
                     # Call retract functions for manifold-aware updates
                     new.__dict__[key] = self.__dict__[key].retract(val)
                 else:
                     raise ValueError("Unsupported type")
             if key in array_attributes:
-                if isinstance(val, jax.Array):
+                if isinstance(val, (jax.Array, float)):
                     # Default additive update
                     new.__dict__[key] = self.__dict__[key] + val
                 elif isinstance(val, dict):
@@ -309,6 +311,16 @@ class ParameterNode:
                 else:
                     raise ValueError("Unsupported type")
         return new
+
+    def get_metadata(self) -> Tuple:
+
+        kwargs = []
+        for f in fields(self):
+            value = getattr(self, f.name)
+            if f.metadata.get("pytree_node") is False:
+                kwargs.append((f.name, value))
+
+        return tuple(kwargs)
 
     def copy(self) -> ParameterNode:
         """
@@ -350,6 +362,8 @@ class ParameterNode:
                 arr.append(value.flatten())
             elif isinstance(value, jax.Array):
                 arr.append(value.flatten())
+            elif isinstance(value, float):
+                arr.append(jnp.array(value))
         return jnp.concatenate(arr)
 
     def tangent_size(self):
@@ -368,6 +382,8 @@ class ParameterNode:
                 size += value.tangent_size()
             elif isinstance(value, jax.Array):
                 size += value.size
+            elif isinstance(value, float):
+                size += 1
         return size
 
     def _mapped_tangent_size(self, keys: Tuple[str]):
@@ -375,7 +391,9 @@ class ParameterNode:
         for key in keys:
             value = self.get_value_at_path(key)
 
-            if isinstance(value, jax.Array):
+            if isinstance(value, float):
+                size += 1
+            elif isinstance(value, jax.Array):
                 size += value.size
             elif isinstance(value, ParameterNode):
                 size += value.tangent_size()
@@ -417,6 +435,9 @@ class ParameterNode:
 
         for f in fields(self):
             value = getattr(self, f.name)
+
+            if isinstance(value, float):
+                value = jnp.array(value)
 
             if isinstance(value, jax.Array):
                 slice_size = value.size
