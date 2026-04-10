@@ -27,7 +27,7 @@ if __name__ == "__main__":
     )
 
     cable_param = CableParameters(
-        stiffness=jnp.array([1e4, 1e1, 1e2]),
+        stiffness=jnp.array([1e3, 1e0, 1e0]),
         damping=environment.default_param.sparse_param.cable_param.damping,
         is_velocity=environment.default_param.sparse_param.cable_param.is_velocity,
     )

@@ -339,3 +339,23 @@ class OneBodyConstraint(Constraint):
         )
 
         return Transform(body_b_position, body_b_rotation)
+
+    def place_frame_a(self, state: State, param: SimulationParameters):
+        body_id = param.rigid_body_param.names.index(self.body)
+        constraint_id = param.constraint_param.names.index(self.name)
+
+        world_body_pos = state.conf.pos[body_id]
+        world_body_rot = state.conf.rot[body_id]
+
+        body_frame_b_pos = param.constraint_param.frame_b.position[constraint_id]
+        body_frame_b_rot = param.constraint_param.frame_b.rotation[constraint_id]
+
+        world_frame_b_rot = math.quat_mul(body_frame_b_rot, world_body_rot)
+        world_frame_b_pos = world_body_pos + math.rotate_vector(
+            world_frame_b_rot, body_frame_b_pos
+        )
+
+        world_frame_a_rot = world_frame_b_rot
+        world_frame_a_pos = world_frame_b_pos
+
+        return Transform(world_frame_a_pos, world_frame_a_rot)

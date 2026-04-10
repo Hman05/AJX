@@ -101,37 +101,51 @@ class CoupleAsCable(PreStepModifier):
 
 
 @struct.dataclass
-class LockAtZeroSpeedMotor(PreStepModifier):
+class LockAtZeroSpeedMotorSE3(PreStepModifier):
     name: str
     constraint: Constraint
     u_idx: int
     lock_idx: int
-    target_dof: int
 
-    def update_params(self, state: DLOState, u: jax.Array, param: SimulationParameters):
-        lock = u[self.u_idx] == 0.0
-        not_lock = jnp.logical_not(lock)
-        current_offset = self.constraint.func2(state, param)[self.target_dof]
-        target = state.lock_targets[self.lock_idx] * lock + u[self.u_idx] * not_lock
-        new_lock_target = (
-            state.lock_targets[self.lock_idx] * lock + current_offset * not_lock
+    def update_params(self, state: DLOState, u, param: SimulationParameters):
+        lock = u[self.u_idx : self.u_idx + 6] == 0.0
+        pos_lock = jnp.all(lock)
+        rot_lock = jnp.all(lock)
+        lock = jnp.concatenate(
+            [pos_lock, pos_lock, pos_lock, rot_lock, rot_lock, rot_lock], axis=None
         )
+
+        updated_frame = self.constraint.place_frame_a(state, param)
+
+        target = u[self.u_idx : self.u_idx + 6] * jnp.logical_not(lock)
+
+        new_frame_pos = state.lock_targets[self.lock_idx][
+            :3
+        ] * pos_lock + updated_frame.pos * jnp.logical_not(pos_lock)
+        new_frame_rot = state.lock_targets[self.lock_idx][
+            3:
+        ] * rot_lock + updated_frame.rot * jnp.logical_not(rot_lock)
+        new_frame = jnp.concatenate([new_frame_pos, new_frame_rot])
         state = state.replace(
-            lock_targets=state.lock_targets.at[self.lock_idx].set(new_lock_target)
+            lock_targets=state.lock_targets.at[self.lock_idx].set(new_frame)
         )
-        param_w_is_velocity = param.tree_replace(
-            {
-                f"constraint_param.is_velocity.{self.constraint.name}": {
-                    self.target_dof: not_lock
-                },
-            }
+        constraint_id = param.constraint_param.names.index(self.constraint.name)
+        new_frames = param.constraint_param.frame_a.replace(
+            position=param.constraint_param.frame_a.position.at[constraint_id].set(
+                new_frame[:3]
+            ),
+            rotation=param.constraint_param.frame_a.rotation.at[constraint_id].set(
+                new_frame[3:7]
+            ),
         )
         return state, (
-            param_w_is_velocity.tree_replace(
+            param.tree_replace(
                 {
-                    f"constraint_param.target.{self.constraint.name}": {
-                        self.target_dof: target
-                    }
+                    f"constraint_param.is_velocity.{self.constraint.name}": jnp.logical_not(
+                        lock
+                    ),
+                    f"constraint_param.target.{self.constraint.name}": target,
+                    f"constraint_param.frame_a": new_frames,
                 }
             )
         )
@@ -383,23 +397,8 @@ class DLO(Environment):
         if self.env_settings.loose_end:
             constraints = tuple([self.first_lock, *self.lock_joints])
 
-        target_speed_motor1 = LockAtZeroSpeedMotor("motor1", self.first_lock, 0, 0, 0)
-        target_speed_motor2 = LockAtZeroSpeedMotor("motor2", self.first_lock, 1, 1, 1)
-        target_speed_motor3 = LockAtZeroSpeedMotor("motor3", self.first_lock, 2, 2, 2)
-        target_speed_motor4 = LockAtZeroSpeedMotor("motor4", self.first_lock, 3, 3, 3)
-        target_speed_motor5 = LockAtZeroSpeedMotor("motor5", self.first_lock, 4, 4, 4)
-        target_speed_motor6 = LockAtZeroSpeedMotor("motor6", self.first_lock, 5, 5, 5)
-
-        target_speed_motor7 = LockAtZeroSpeedMotor("motor7", self.last_lock, 6, 6, 0)
-        target_speed_motor8 = LockAtZeroSpeedMotor("motor8", self.last_lock, 7, 7, 1)
-        target_speed_motor9 = LockAtZeroSpeedMotor("motor9", self.last_lock, 8, 8, 2)
-        target_speed_motor10 = LockAtZeroSpeedMotor("motor10", self.last_lock, 9, 9, 3)
-        target_speed_motor11 = LockAtZeroSpeedMotor(
-            "motor11", self.last_lock, 10, 10, 4
-        )
-        target_speed_motor12 = LockAtZeroSpeedMotor(
-            "motor12", self.last_lock, 11, 11, 5
-        )
+        target_speed_motor1 = LockAtZeroSpeedMotorSE3("motor1", self.first_lock, 0, 0)
+        target_speed_motor2 = LockAtZeroSpeedMotorSE3("motor2", self.last_lock, 6, 1)
 
         # n_constraints = one per body + one
         n_segment_locks = self.env_settings.n_segments + 1
@@ -421,16 +420,6 @@ class DLO(Environment):
         pre_step_modifiers = (
             target_speed_motor1,
             target_speed_motor2,
-            target_speed_motor3,
-            target_speed_motor4,
-            target_speed_motor5,
-            target_speed_motor6,
-            target_speed_motor7,
-            target_speed_motor8,
-            target_speed_motor9,
-            target_speed_motor10,
-            target_speed_motor11,
-            target_speed_motor12,
             couple_constraints,
         )
 
@@ -441,15 +430,10 @@ class DLO(Environment):
             jnp.array([0, -0.1, -0.1]),
         ]
 
-        # point_set = [(i, offset) for offset in offsets for i in range(n)]
         temp_limit = 1
         point_set = [
             (i + 1, offset) for i in range(max(n, temp_limit)) for offset in offsets
         ]
-        # point_set5 = [(i, jnp.array([-bl, 0.1, 0.1])) for i in range(n)]
-        # point_set6 = [(i, jnp.array([-bl, 0.1, -0.1])) for i in range(n)]
-        # point_set7 = [(i, jnp.array([-bl, -0.1, 0.1])) for i in range(n)]
-        # point_set8 = [(i, jnp.array([-bl, -0.1, -0.1])) for i in range(n)]
         camera_transform = Transform(
             jnp.array([bl * self.env_settings.n_segments, 0.0, 1.0]),
             math.quat_from_axis_angle(jnp.array([1.0, 0.0, 0.0]), jnp.pi),
@@ -515,7 +499,12 @@ class DLO(Environment):
         initial_conf = self.observation_to_configuration(None, param)
         n_bodies = self.env_settings.n_segments
         initial_gvel = GeneralizedVelocity(jnp.zeros([n_bodies + 2, 6]))
-        targets = jnp.zeros([12])
+        targets = jnp.stack(
+            [
+                param.constraint_param.frame_a[0].flatten(),
+                param.constraint_param.frame_a[-1].flatten(),
+            ]
+        )
         return DLOState(initial_conf, initial_gvel, targets)
 
     def control_help_strings(self):
