@@ -3,32 +3,72 @@ import jax.numpy as jnp
 from ajx.block_sparse.base import BlockMatrixBase
 from jax.tree_util import register_pytree_node_class
 
-from typing import List, Dict, Tuple
-from itertools import combinations_with_replacement, product, accumulate
+from flax import struct
+import numpy as np
+import numpy.typing as npt
 
 
-@register_pytree_node_class
+@struct.dataclass
 class VBCMatrix(BlockMatrixBase):
     """A variable block column matrix format."""
 
-    def __init__(
-        self,
+    data: jax.Array
+    byte_row_indices: bytes = struct.field(pytree_node=False)
+    byte_col_ptr: bytes = struct.field(pytree_node=False)
+    byte_row_sizes: bytes = struct.field(pytree_node=False)
+    byte_col_sizes: bytes = struct.field(pytree_node=False)
+    byte_row_begin_indices: bytes = struct.field(pytree_node=False)
+    byte_col_begin_indices: bytes = struct.field(pytree_node=False)
+
+    @property
+    def row_indices(self):
+        return np.frombuffer(self.byte_row_indices, dtype=np.int64)
+
+    @property
+    def col_ptr(self):
+        return np.frombuffer(self.byte_col_ptr, dtype=np.int64)
+
+    @property
+    def row_sizes(self):
+        return np.frombuffer(self.byte_row_sizes, dtype=np.int64)
+
+    @property
+    def col_sizes(self):
+        return np.frombuffer(self.byte_col_sizes, dtype=np.int64)
+
+    @property
+    def row_begin_indices(self):
+        return np.frombuffer(self.byte_row_begin_indices, dtype=np.int64)
+
+    @property
+    def col_begin_indices(self):
+        return np.frombuffer(self.byte_col_begin_indices, dtype=np.int64)
+
+    @classmethod
+    def create(
+        cls,
         data: jax.Array,
-        row_indices: Tuple[int],
-        col_ptr: Tuple[int],
-        row_sizes: Tuple[int],
-        col_sizes: Tuple[int],
+        row_indices: npt.NDArray[np.int64],
+        col_ptr: npt.NDArray[np.int64],
+        row_sizes: npt.NDArray[np.int64],
+        col_sizes: npt.NDArray[np.int64],
     ):
-        self.data = data
-        self.row_indices = row_indices
-        self.col_ptr = col_ptr
-        self.row_sizes = row_sizes
-        self.col_sizes = col_sizes
+        row_sizes = np.array(row_sizes)
+        col_sizes = np.array(col_sizes)
 
-        self.row_begin_indices = list(accumulate([0, *row_sizes]))
-        self.col_begin_indices = list(accumulate([0, *col_sizes]))
+        row_begin_indices = np.cumulative_sum(row_sizes, include_initial=True)
+        col_begin_indices = np.cumulative_sum(col_sizes, include_initial=True)
 
-        pass
+        new = VBCMatrix(
+            data,
+            np.array(row_indices).tobytes(),
+            np.array(col_ptr).tobytes(),
+            row_sizes.tobytes(),
+            col_sizes.tobytes(),
+            row_begin_indices.tobytes(),
+            col_begin_indices.tobytes(),
+        )
+        return new
 
     @property
     def n_rows(self):

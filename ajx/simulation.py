@@ -618,7 +618,7 @@ class Simulation:
             # Copy rhs of this constraint group to the full prhs vector
             b_data = b_data.at[row_slice_begin:row_slice_end].set(rhs.flatten())
 
-        G = VBRMatrix(G_data, G_col_indices, G_row_ptr, G_row_sizes, G_col_sizes)
+        G = VBRMatrix.create(G_data, G_col_indices, G_row_ptr, G_row_sizes, G_col_sizes)
 
         return M, M_inv, G, Sigma_data, b_data
 
@@ -695,7 +695,7 @@ class Simulation:
                 slice_begin2 = slice_end2
             sigma_slice_begin = sigma_slice_end
             slice_begin1 = slice_end1
-        S = VBCMatrix(S_data, row_indices, col_ptr, block_sizes, block_sizes)
+        S = VBCMatrix.create(S_data, row_indices, col_ptr, block_sizes, block_sizes)
 
         return S, rsi_dict
 

@@ -302,13 +302,14 @@ def ldlt_factor(A: VBCMatrix, data_ptr):
 
     A_data_ptr = 0
     # cond_list = {}
+    A_data = A.data
     for k in range(len(A.col_ptr) - 1):
         # Select the pivot (block on the diagonal).
         # The pivot is guaranteed (from prior asserts) to be
         # made up of the first slice in the current "column chunk".
 
-        A.data, A_data_ptr = sparse_schur_reduction(
-            A.data,
+        A_data, A_data_ptr = sparse_schur_reduction(
+            A_data,
             Lt_buffer,
             k,
             A_data_ptr,
@@ -319,7 +320,7 @@ def ldlt_factor(A: VBCMatrix, data_ptr):
         )
         pass
 
-    return A
+    return VBCMatrix.create(A_data, A.row_indices, A.col_ptr, A.row_sizes, A.col_sizes)
 
 
 def forward_substitution(A, b):

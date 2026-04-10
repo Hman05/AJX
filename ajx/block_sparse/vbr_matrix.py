@@ -6,30 +6,72 @@ from ajx.block_sparse.base import BlockMatrixBase
 from typing import List, Dict, Tuple
 from itertools import combinations_with_replacement, product, accumulate
 from jax.tree_util import register_pytree_node_class
+from flax import struct
+import numpy as np
+import numpy.typing as npt
 
 
-@register_pytree_node_class
+@struct.dataclass
 class VBRMatrix(BlockMatrixBase):
     """A variable block row matrix format."""
 
-    def __init__(
-        self,
+    data: jax.Array
+    # Using bytes instead of tuples. Numpy arrays are not allowed by jax
+    byte_col_indices: bytes = struct.field(pytree_node=False)
+    byte_row_ptr: bytes = struct.field(pytree_node=False)
+    byte_row_sizes: bytes = struct.field(pytree_node=False)
+    byte_col_sizes: bytes = struct.field(pytree_node=False)
+    byte_row_begin_indices: bytes = struct.field(pytree_node=False)
+    byte_col_begin_indices: bytes = struct.field(pytree_node=False)
+
+    @property
+    def col_indices(self):
+        return np.frombuffer(self.byte_col_indices, dtype=np.int64)
+
+    @property
+    def row_ptr(self):
+        return np.frombuffer(self.byte_row_ptr, dtype=np.int64)
+
+    @property
+    def row_sizes(self):
+        return np.frombuffer(self.byte_row_sizes, dtype=np.int64)
+
+    @property
+    def col_sizes(self):
+        return np.frombuffer(self.byte_col_sizes, dtype=np.int64)
+
+    @property
+    def row_begin_indices(self):
+        return np.frombuffer(self.byte_row_begin_indices, dtype=np.int64)
+
+    @property
+    def col_begin_indices(self):
+        return np.frombuffer(self.byte_col_begin_indices, dtype=np.int64)
+
+    @classmethod
+    def create(
+        cls,
         data: jax.Array,
-        col_indices: Tuple[int],
-        row_ptr: Tuple[int],
-        row_sizes: Tuple[int],
-        col_sizes: Tuple[int],
+        col_indices: npt.NDArray[np.int64],
+        row_ptr: npt.NDArray[np.int64],
+        row_sizes: npt.NDArray[np.int64],
+        col_sizes: npt.NDArray[np.int64],
     ):
-        self.data = data
-        self.col_indices = col_indices
-        self.row_ptr = row_ptr
-        self.row_sizes = row_sizes
-        self.col_sizes = col_sizes
+        row_sizes = np.array(row_sizes)
+        col_sizes = np.array(col_sizes)
+        row_begin_indices = np.cumulative_sum(row_sizes, include_initial=True)
+        col_begin_indices = np.cumulative_sum(col_sizes, include_initial=True)
 
-        self.row_begin_indices = list(accumulate([0, *row_sizes]))
-        self.col_begin_indices = list(accumulate([0, *col_sizes]))
-
-        pass
+        new = VBRMatrix(
+            data,
+            np.array(col_indices).tobytes(),
+            np.array(row_ptr).tobytes(),
+            row_sizes.tobytes(),
+            col_sizes.tobytes(),
+            row_begin_indices.tobytes(),
+            col_begin_indices.tobytes(),
+        )
+        return new
 
     @property
     def n_rows(self):
