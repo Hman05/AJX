@@ -46,84 +46,54 @@ class DLOState(ParameterNode):
 
 
 @struct.dataclass
-class PositiveParam(ParameterNode):
-    data: jax.Array
-
-    def retract(self, delta):
-        def clip_st(x, lo, hi):
-            clipped = jnp.clip(x, lo, hi)
-            return x + jax.lax.stop_gradient(clipped - x)
-
-        updated = self.data + delta
-        return PositiveParam(clip_st(updated, 1e-12, 1e12))
-
-    # def retract(self, delta):
-    #     new = self.data / (1 + delta * self.data)
-    #     return PositiveParam(jnp.clip(new, 1e-12, 1e12))
-
-
-@struct.dataclass
-class CoupledConstraintParameters(ParameterNode):
-    linear_stiffness: PositiveParam
-    quadratic_stiffness: PositiveParam
+class CableParameters(ParameterNode):
+    # Stretch, bend, torsion
+    stiffness: jax.Array
     damping: jax.Array
     is_velocity: jax.Array
 
 
-DLOSparseParam = create_parameter_node("DLOSparseParam", ("coupled_constraint_param",))
+DLOSparseParam = create_parameter_node("DLOSparseParam", ("cable_param",))
 
 
 @dataclass
-class NonlinearUpdate(PreStepModifier):
-    name: str
-    target: str
-    lbda: Any
-
-    def update_params(self, state: DLOState, u: jax.Array, param: SimulationParameters):
-        new_param = param.tree_replace({self.target: self.lbda(state)})
-        return state, new_param
-
-
-@dataclass
-class CoupleConstraints(PreStepModifier):
+class CoupleAsCable(PreStepModifier):
     name: str
     target_slice: Tuple
     body_ids: jax.Array
     constraint_ids: jax.Array
     constraint_type: ConstraintType
+    segment_length: jax.Array
 
     def update_params(self, state: DLOState, u: jax.Array, param: SimulationParameters):
-        ccp: CoupledConstraintParameters = param.sparse_param.coupled_constraint_param
+        cable_param: CableParameters = param.sparse_param.cable_param
         slice_begin = self.target_slice[0]
         slice_end = self.target_slice[1]
         constraint_param = param.constraint_param
-        offsets = vmap(TwoBodyConstraint.func, in_axes=(None, None, 0, 0, None))(
-            param,
-            state,
-            self.body_ids,
-            self.constraint_ids,
-            self.constraint_type,
-        )
-        compliance = jnp.clip(
-            1
-            / (
-                ccp.linear_stiffness.data
-                + jnp.abs(offsets) * ccp.quadratic_stiffness.data
-            ),
-            1e-6,
-            1e8,
+
+        stiffness = jnp.array(
+            [
+                cable_param.stiffness[0] / self.segment_length,
+                1e8,
+                1e8,
+                cable_param.stiffness[2] / self.segment_length,
+                cable_param.stiffness[1] / self.segment_length,
+                cable_param.stiffness[1] / self.segment_length,
+            ]
         )
         constraint_param = constraint_param.replace(
             compliance=constraint_param.compliance.at[slice_begin:slice_end].set(
-                compliance
+                1 / stiffness
             )
         )
         constraint_param = constraint_param.replace(
-            damping=constraint_param.damping.at[slice_begin:slice_end].set(ccp.damping)
+            damping=constraint_param.damping.at[slice_begin:slice_end].set(
+                cable_param.damping
+            )
         )
         constraint_param = constraint_param.replace(
             is_velocity=constraint_param.is_velocity.at[slice_begin:slice_end].set(
-                ccp.is_velocity
+                cable_param.is_velocity
             )
         )
         new_param = param.replace(constraint_param=constraint_param)
@@ -138,7 +108,7 @@ class LockAtZeroSpeedMotor(PreStepModifier):
     lock_idx: int
     target_dof: int
 
-    def update_params(self, state: DLOState, u, param: SimulationParameters):
+    def update_params(self, state: DLOState, u: jax.Array, param: SimulationParameters):
         lock = u[self.u_idx] == 0.0
         not_lock = jnp.logical_not(lock)
         current_offset = self.constraint.func2(state, param)[self.target_dof]
@@ -433,7 +403,7 @@ class DLO(Environment):
 
         # n_constraints = one per body + one
         n_segment_locks = self.env_settings.n_segments + 1
-        couple_constraints = CoupleConstraints(
+        couple_constraints = CoupleAsCable(
             "couple_constraints",
             target_slice=(1, n_segment_locks + 1),
             body_ids=jnp.stack(
@@ -445,6 +415,7 @@ class DLO(Environment):
             ),
             constraint_ids=jnp.arange(0, n_segment_locks)[:, None],
             constraint_type=self.env_settings.constraint_type,
+            segment_length=self.env_settings.segment_halflength * 2,
         )
 
         pre_step_modifiers = (
@@ -495,9 +466,8 @@ class DLO(Environment):
             pre_step_modifiers,
         )
 
-        coupled_constraint_param = CoupledConstraintParameters(
-            linear_stiffness=PositiveParam(jnp.ones(6) * 1e5),
-            quadratic_stiffness=PositiveParam(jnp.ones(6) * 0.0),
+        coupled_constraint_param = CableParameters(
+            stiffness=jnp.array([1e5, 1e5, 1e5]),
             damping=jnp.ones(6) * 2 * self.sim.settings.timestep * 4,
             is_velocity=jnp.zeros(6, dtype=bool),
         )
