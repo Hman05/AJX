@@ -44,6 +44,8 @@ class EnvironmentScene:
         env,
         env_param,
         initial_state,
+        show_text=True,
+        show_fps=True,
     ):
         self.timestep = env.sim.settings.timestep
         self.environment = env
@@ -65,6 +67,8 @@ class EnvironmentScene:
         self.contoller_is_active = True
 
         self.state_sequence = None
+        self.show_text = show_text
+        self.show_fps = show_fps
 
     def setup(self, base: DirectObject, render):
         def toggle_physics():
@@ -128,6 +132,8 @@ class EnvironmentScene:
             )
             for i in range(10)
         ]
+        if not self.show_text:
+            self.text_displays = []
         base.camLens.setNearFar(0.01, 2000)
 
         # Create sky gradient

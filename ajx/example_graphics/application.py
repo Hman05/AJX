@@ -13,19 +13,33 @@ from panda3d.core import ClockObject
 from panda3d.core import WindowProperties
 from panda3d.core import Vec3, Quat
 from panda3d.core import Trackball
+from panda3d.core import (
+    FrameBufferProperties,
+    WindowProperties,
+    GraphicsOutput,
+    GraphicsPipe,
+    Texture,
+)
+from PIL import Image
 
 
 class Application(ShowBase):
-    def __init__(self, scene, framerate: int = 60, camera_controller: str = "fps"):
+    def __init__(
+        self, scene, framerate: int = 60, camera_controller: str = "fps", headless=False
+    ):
         ShowBase.__init__(self)
         self.scene = scene
+        self.headless = headless
         self.camera_controller = camera_controller
         self.create_events()
         self.init_mouse()
         self.reset_camera()
 
         self.set_background_color(0.1, 0.1, 0.8, 1)
-        self.set_frame_rate_meter(True)
+        # self.set_frame_rate_meter(True)
+
+        if self.headless:
+            self.init_offscreen_buffer()
 
         scene.setup(self, self.render)
 
@@ -93,7 +107,8 @@ class Application(ShowBase):
         self.pitch = hpr.y
 
     def update(self, task):
-        self.update_camera()
+        if not self.headless:
+            self.update_camera()
         self.scene.update(self.key_map)
         return task.cont
 
@@ -157,6 +172,50 @@ class Application(ShowBase):
 
     def attachNewNode(self, node):
         return self.render.attachNewNode(node)
+
+    def init_offscreen_buffer(self):
+        props = FrameBufferProperties()
+        props.setRgbColor(True)
+        props.setAlphaBits(8)
+        props.setDepthBits(24)
+
+        win_props = WindowProperties.size(800, 600)
+
+        self.offscreen_texture = Texture()
+
+        self.offscreen_buffer = self.graphicsEngine.makeOutput(
+            self.pipe,
+            "offscreen-buffer",
+            -2,
+            props,
+            win_props,
+            GraphicsPipe.BFRefuseWindow,
+            self.win.getGsg(),
+            self.win,
+        )
+
+        self.offscreen_buffer.addRenderTexture(
+            self.offscreen_texture, GraphicsOutput.RTMCopyRam
+        )
+
+        # Camera for offscreen rendering
+        self.offscreen_camera = self.makeCamera(self.offscreen_buffer)
+
+    def get_headless_frame(self):
+        if not self.headless:
+            return None
+
+        self.graphicsEngine.renderFrame()
+
+        tex = self.offscreen_texture
+
+        img = Image.frombytes(
+            "RGBA",
+            (tex.getXSize(), tex.getYSize()),
+            tex.getRamImageAs("RGBA").getData(),
+        ).transpose(Image.FLIP_TOP_BOTTOM)
+
+        return img
 
 
 def run():

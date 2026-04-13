@@ -14,7 +14,6 @@ class DLOSettings:
     n_segments: int
     segment_halflength: float
     constraint_type: ConstraintType
-    observation_type: str
     pose_estimates_at: List = ()
     loose_end: bool = False
     diameter: float = 0.032
@@ -23,7 +22,6 @@ class DLOSettings:
         n_segments,
         length,
         constraint_type,
-        observation_type,
         pose_estimates_at=(),
         loose_end=False,
     ):
@@ -32,7 +30,6 @@ class DLOSettings:
             n_segments,
             0.5 * segment_length,
             constraint_type,
-            observation_type,
             pose_estimates_at,
             loose_end,
         )
@@ -423,24 +420,7 @@ class DLO(Environment):
             couple_constraints,
         )
 
-        offsets = [
-            jnp.array([0, 0.1, 0.1]),
-            jnp.array([0, 0.1, -0.1]),
-            jnp.array([0, -0.1, 0.1]),
-            jnp.array([0, -0.1, -0.1]),
-        ]
-
-        temp_limit = 1
-        point_set = [
-            (i + 1, offset) for i in range(max(n, temp_limit)) for offset in offsets
-        ]
-        camera_transform = Transform(
-            jnp.array([bl * self.env_settings.n_segments, 0.0, 1.0]),
-            math.quat_from_axis_angle(jnp.array([1.0, 0.0, 0.0]), jnp.pi),
-        )
-        self.camera = PointTrackingCamera("camera", [*point_set], camera_transform)
-
-        sensors = (self.camera,)
+        sensors = ()
 
         self.sim = Simulation(
             sim_settings,

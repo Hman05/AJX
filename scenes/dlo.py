@@ -20,7 +20,6 @@ if __name__ == "__main__":
             n_segments=50,
             length=0.6,
             constraint_type=ConstraintType.SE3.value,
-            observation_type="pose",
             pose_estimates_at=[0.10, 0.20, 0.30, 0.40, 0.50],
             loose_end=False,
         ),
