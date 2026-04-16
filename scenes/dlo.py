@@ -10,9 +10,12 @@ from ajx.example_environments.dlo import DLO, DLOSettings, CableParameters
 from ajx.simulation import SimulationSettings, Solver
 import jax.numpy as jnp
 import ajx.math as math
+from ajx import Transform
+
 
 if __name__ == "__main__":
     timestep = 0.016667
+    grippermc_to_marker = jnp.array([0.0478024, 0, 0])
 
     environment = DLO(
         sim_settings=SimulationSettings(timestep, True, Solver.DENSE_LINEAR),
@@ -20,7 +23,9 @@ if __name__ == "__main__":
             n_segments=50,
             length=0.6,
             constraint_type=ConstraintType.SE3.value,
-            pose_estimates_at=[0.10, 0.20, 0.30, 0.40, 0.50],
+            pose_estimate_linear_offsets=[0.10, 0.20, 0.30, 0.40, 0.50],
+            gripper1_offset=Transform(grippermc_to_marker, math.Rotations.unitary),
+            gripper2_offset=Transform(-grippermc_to_marker, math.Rotations.unitary),
             loose_end=False,
         ),
     )
@@ -37,6 +42,6 @@ if __name__ == "__main__":
 
     initial_state = environment.get_neutral_state(env_param)
 
-    scene = EnvironmentScene(environment, env_param, initial_state)
+    scene = EnvironmentScene(environment, env_param, initial_state, debug_render=False)
     app = Application(scene, 60, "default")
     app.run()

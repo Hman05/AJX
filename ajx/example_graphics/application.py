@@ -36,7 +36,7 @@ class Application(ShowBase):
         self.reset_camera()
 
         self.set_background_color(0.1, 0.1, 0.8, 1)
-        # self.set_frame_rate_meter(True)
+        self.set_frame_rate_meter(True)
 
         if self.headless:
             self.init_offscreen_buffer()

@@ -7,6 +7,7 @@ from ajx.example_environments.environment import Environment
 from typing import Optional
 import ajx.example_graphics.geometry as geometry
 import numpy as np
+from ajx import Transform
 
 
 @dataclass
@@ -14,7 +15,8 @@ class DLOSettings:
     n_segments: int
     segment_halflength: float
     constraint_type: ConstraintType
-    pose_estimates_at: List = ()
+    pose_estimate_bodies: List[str] = ()
+    pose_estimate_offsets: List[Transform] = ()
     loose_end: bool = False
     diameter: float = 0.032
 
@@ -22,15 +24,32 @@ class DLOSettings:
         n_segments,
         length,
         constraint_type,
-        pose_estimates_at=(),
+        pose_estimate_linear_offsets: List[float],
+        gripper1_offset: Transform,
+        gripper2_offset: Transform,
         loose_end=False,
     ):
         segment_length = length / n_segments
+
+        pose_estimate_bodies = []
+        pose_estimate_offsets = []
+        pose_estimate_bodies.append("grip_tool1")
+        pose_estimate_offsets.append(gripper1_offset)
+        unit_transform = Transform(
+            jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
+        )
+        for displacement in pose_estimate_linear_offsets:
+            i = int(n_segments * displacement / length)
+            pose_estimate_bodies.append(f"body{i}")
+            pose_estimate_offsets.append(unit_transform)
+        pose_estimate_bodies.append("grip_tool2")
+        pose_estimate_offsets.append(gripper2_offset)
         return DLOSettings(
             n_segments,
             0.5 * segment_length,
             constraint_type,
-            pose_estimates_at,
+            pose_estimate_bodies,
+            pose_estimate_offsets,
             loose_end,
         )
 
@@ -180,7 +199,6 @@ class DLO(Environment):
         super().post_init()
 
     def _build_sim(self, sim_settings):
-        boxes = []
         arms = []
         arms_param = []
         self.lock_joints = []
@@ -188,6 +206,7 @@ class DLO(Environment):
         gradient_start = jnp.array([1.0, 0.0, 0.0])
         gradient_end = jnp.array([0.0, 1.0, 1.0])
         n = self.env_settings.n_segments
+        bl = self.env_settings.segment_halflength
         gradient = gradient_start - jnp.outer(
             jnp.arange(n), (gradient_start - gradient_end) / n
         )
@@ -196,9 +215,13 @@ class DLO(Environment):
         grapple_box_length = 0.0795
 
         script_dir = os.path.dirname(__file__)
-        open_cylinder_path = os.path.join(script_dir, "assets/capsule.bam")
+        capsule_path = os.path.join(script_dir, "assets/capsule.bam")
         grip_tool_path = os.path.join(script_dir, "assets/grip_tool.bam")
-
+        grip_tool_debug_path = os.path.join(
+            script_dir, "assets/grip_tool_wireframe.bam"
+        )
+        axes_path = os.path.join(script_dir, "assets/axes.glb")
+        marker_debug_path = os.path.join(script_dir, "assets/cube_wireframe.glb")
         reference_box = geometry.Box(
             f"grip_tool1_box",
             grapple_box_length,
@@ -207,64 +230,118 @@ class DLO(Environment):
             translation=(0.0, 0.0, 0.0),
             color=(0.1, 0.1, 0.1),
         )
-        grip_tool1_model = geometry.Model(
-            f"grip_tool1_model",
+        grip_tool_model = geometry.Model(
+            f"grip_tool_model",
             grip_tool_path,
             scale=(0.001, 0.001, 0.001),
-            rotation=math.Rotations.x_to_y,
         )
-        grip_tool2_model = geometry.Model(
-            f"grip_tool2_model",
-            grip_tool_path,
+        grip_tool_debug_model = geometry.Model(
+            f"grip_tool_debug_model",
+            grip_tool_debug_path,
             scale=(0.001, 0.001, 0.001),
-            rotation=math.Rotations.y_to_x,
         )
-        grip_tool1 = RigidBody(f"grip_tool1", (f"grip_tool1_model",))
+        marker_model = geometry.Model(
+            f"marker_model",
+            marker_debug_path,
+            scale=(0.02, 0.02, 0.02),
+        )
+        # TODO: Create after frame 1
+        frame_model = geometry.Model(
+            f"axes_model",
+            axes_path,
+            scale=(0.03, 0.03, 0.03),
+        )
+
+        tool1_model_local_transform = Transform(
+            jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_y
+        )
+        tool2_model_local_transform = Transform(
+            jnp.array([0.0, 0.0, 0.0]), math.Rotations.y_to_x
+        )
+        marker1_local_transform = self.env_settings.pose_estimate_offsets[0]
+        marker2_local_transform = self.env_settings.pose_estimate_offsets[-1]
+        tool1_to_dlo_frame = Transform(
+            jnp.array([grapple_box_length, 0.0, 0.0]), math.Rotations.unitary
+        )
+        tool2_to_dlo_frame = Transform(
+            jnp.array([-grapple_box_length, 0.0, 0.0]), math.Rotations.unitary
+        )
+
+        grip_tool1 = RigidBody(
+            f"grip_tool",
+            [("grip_tool_model", tool1_model_local_transform)],
+            [
+                ("grip_tool_debug_model", tool1_model_local_transform),
+                ("marker_model", marker1_local_transform),
+                ("axes_model", tool1_to_dlo_frame),
+            ],
+        )
         grip_tool1_param = RigidBodyParameters.create(
             mass=density * 0.4 * 0.4 * grapple_box_length,
             inertia_diag=reference_box.get_diag_inertia(density),
             name="grip_tool1",
         )
 
-        grip_tool2 = RigidBody(f"grip_tool2", (f"grip_tool2_model",))
+        grip_tool2 = RigidBody(
+            f"grip_tool2",
+            [("grip_tool_model", tool2_model_local_transform)],
+            [
+                ("grip_tool_debug_model", tool2_model_local_transform),
+                ("marker_model", marker2_local_transform),
+                ("axes_model", tool2_to_dlo_frame),
+            ],
+        )
         grip_tool2_param = RigidBodyParameters.create(
             mass=density * 0.4 * 0.4 * grapple_box_length,
             inertia_diag=reference_box.get_diag_inertia(density),
             name="grip_tool2",
         )
-        for i in range(self.env_settings.n_segments):
-            pose_at_body_ids = [
-                int(self.env_settings.n_segments * disp / length)
-                for disp in self.env_settings.pose_estimates_at
-            ]
 
-            color = tuple([*gradient[i]])
-            if i in pose_at_body_ids:
-                color = (0.0, 0.0, 0.1)
+        segment_model = geometry.Model(
+            f"segment_model",
+            capsule_path,
+            rotation=math.Rotations.y_to_x,
+            scale=(
+                0.5 * self.env_settings.diameter,
+                self.env_settings.segment_halflength,
+                0.5 * self.env_settings.diameter,
+            ),
+            color=(0.1, 0.1, 0.5),
+        )
+        for i in range(self.env_settings.n_segments):
+            frame_a_transform = Transform(
+                jnp.array([bl, 0.0, 0.0]), math.Rotations.unitary
+            )
+            frame_b_transform = Transform(
+                jnp.array([-bl, 0.0, 0.0]), math.Rotations.unitary
+            )
+            debug_geometry = [
+                ("axes_model", frame_a_transform),
+                ("axes_model", frame_b_transform),
+            ]
+            if f"body{i}" in self.env_settings.pose_estimate_bodies:
+                intensity = i / self.env_settings.n_segments
+                debug_geometry = [
+                    ("axes_model", frame_a_transform),
+                    ("axes_model", frame_b_transform),
+                    ("marker_model", Transform.unitary()),
+                ]
+
             box_old = geometry.Box(
-                f"box",
+                f"box_old",
                 self.env_settings.segment_halflength,
                 0.1,
                 0.1,
                 translation=(0.0, 0.0, 0.0),
-                color=color,
             )
-            box = geometry.Model(
-                f"box{i}",
-                open_cylinder_path,
-                rotation=math.Rotations.y_to_x,
-                scale=(
-                    0.5 * self.env_settings.diameter,
-                    self.env_settings.segment_halflength,
-                    0.5 * self.env_settings.diameter,
-                ),
-                color=color,
-            )
-            boxes.append(box)
             mass = density * 0.1 * 0.1 * self.env_settings.segment_halflength
             inertia = box_old.get_diag_inertia(density)
 
-            arms.append(RigidBody(f"body{i}", (f"box{i}",)))
+            arms.append(
+                RigidBody(
+                    f"body{i}", [("segment_model", Transform.unitary())], debug_geometry
+                )
+            )
             arms_param.append(
                 RigidBodyParameters.create(
                     mass=mass,
@@ -272,22 +349,15 @@ class DLO(Environment):
                     name=f"body{i}",
                 )
             )
-        rotation1 = math.quat_from_axis_angle(
-            jnp.array([-1.0, 0.0, 0.0]), -0.0 * jnp.pi
-        )
-        rotation2 = math.quat_from_axis_angle(
-            jnp.array([-1.0, 0.0, 0.0]), -0.0 * jnp.pi
-        )
 
         self.first_lock = OneBodyConstraint(
             name=f"grip_tool1_lock",
             body="grip_tool1",
             constraint_type=self.env_settings.constraint_type,
         )
-        bl = self.env_settings.segment_halflength
         first_lock_param = ConstraintParameters.create_locked_ext(
-            frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), rotation1),
-            frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), rotation2),
+            frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.unitary),
+            frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.unitary),
             compliance_lin=1e-5,
             compliance_rot=1e-5,
             viscous_compliance_lin=1e-3,
@@ -308,8 +378,8 @@ class DLO(Environment):
         # [0.531634 m, -0.008073 m, -79.5134] -> 0.0795
         lock_joint_param.append(
             ConstraintParameters.create_locked(
-                frame_a=Frame(jnp.array([0.0795, 0.0, 0.0]), rotation1),
-                frame_b=Frame(jnp.array([-bl, 0.0, 0.0]), rotation2),
+                frame_a=Frame(tool1_to_dlo_frame.pos, tool1_to_dlo_frame.rot),
+                frame_b=Frame(jnp.array([-bl, 0.0, 0.0]), math.Rotations.unitary),
                 compliance=1e-5,
                 viscous_compliance=1e-5,
                 damping=2 * self.reference_timestep,
@@ -328,8 +398,8 @@ class DLO(Environment):
             )
             lock_joint_param.append(
                 ConstraintParameters.create_locked(
-                    frame_a=Frame(jnp.array([bl, 0.0, 0.0]), rotation1),
-                    frame_b=Frame(jnp.array([-bl, 0.0, 0.0]), rotation2),
+                    frame_a=Frame(jnp.array([bl, 0.0, 0.0]), math.Rotations.unitary),
+                    frame_b=Frame(jnp.array([-bl, 0.0, 0.0]), math.Rotations.unitary),
                     compliance=1e-5,
                     viscous_compliance=1e-5,
                     damping=2 * self.reference_timestep,
@@ -347,8 +417,8 @@ class DLO(Environment):
         )
         lock_joint_param.append(
             ConstraintParameters.create_locked(
-                frame_a=Frame(jnp.array([bl, 0.0, 0.0]), rotation1),
-                frame_b=Frame(jnp.array([-grapple_box_length, 0.0, 0.0]), rotation2),
+                frame_a=Frame(jnp.array([bl, 0.0, 0.0]), math.Rotations.unitary),
+                frame_b=Frame(tool2_to_dlo_frame.pos, tool2_to_dlo_frame.rot),
                 compliance=1e-5,
                 viscous_compliance=1e-5,
                 damping=2 * self.reference_timestep,
@@ -370,9 +440,9 @@ class DLO(Environment):
                         0.0,
                     ]
                 ),
-                rotation1,
+                math.Rotations.unitary,
             ),
-            frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), rotation2),
+            frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.unitary),
             compliance_lin=1e-5,
             compliance_rot=1e-5,
             viscous_compliance_lin=1e-3,
@@ -443,20 +513,27 @@ class DLO(Environment):
             DLOSparseParam(coupled_constraint_param),
         )
 
-        self.geometry_list = tuple([grip_tool1_model, *boxes, grip_tool2_model])
+        self.ground = geometry.Square(
+            "ground",
+            400.0,
+            400.0,
+            translation=(bl * self.env_settings.n_segments, 0.0, -100.0),
+            rotation=math.quat_from_axis_angle(jnp.array([1.0, 0.0, 0.0]), jnp.pi / 2),
+            color=(0.3, 0.3, 0.4),
+        )
+        self.geometry_list = tuple(
+            [
+                grip_tool_model,
+                grip_tool_debug_model,
+                marker_model,
+                frame_model,
+                segment_model,
+                frame_model,
+                self.ground,
+            ]
+        )
 
-        self.extra_geometry = [
-            geometry.Square(
-                "ground",
-                400.0,
-                400.0,
-                translation=(bl * self.env_settings.n_segments, 0.0, -100.0),
-                rotation=math.quat_from_axis_angle(
-                    jnp.array([1.0, 0.0, 0.0]), jnp.pi / 2
-                ),
-                color=(0.3, 0.3, 0.4),
-            ),
-        ]
+        self.extra_geometry = [("ground", Transform.unitary())]
 
     def observation_to_configuration(self, observation, param):
         world_transform = Transform(
@@ -560,6 +637,38 @@ class DLO(Environment):
             motor_1_to_12 = jnp.concatenate([motor7_to_12, motor1_to_6])
         control_state = (control_first, switch_is_down)
         return motor_1_to_12, control_state
+
+    def convert_tracking_transforms_to_body_transforms(
+        self, tracking_transforms: Transform
+    ):
+        offset_transforms = Transform(
+            pos=jnp.stack([po.pos for po in self.env_settings.pose_estimate_offsets]),
+            rot=jnp.stack([po.rot for po in self.env_settings.pose_estimate_offsets]),
+        )
+        tracking_transforms2 = Transform(
+            pos=jnp.stack([po.pos for po in tracking_transforms]),
+            rot=jnp.stack([po.rot for po in tracking_transforms]),
+        )
+
+        body_transforms = vmap(Transform.get_relative)(
+            tracking_transforms2, offset_transforms
+        )
+        return body_transforms
+
+    def get_state_with_floating_markers(
+        self, param: SimulationParameters, transforms: Transform
+    ):
+        """Only for debug initialization"""
+        # Find "relaxed-offset" at interpolation transforms
+        state0 = self.get_neutral_state(param)
+        indices_p = [
+            param.rigid_body_param.names.index(name)
+            for name in self.env_settings.pose_estimate_bodies
+        ]
+        new_pos = state0.conf.pos.at[indices_p, :].set(transforms.pos)
+        new_rot = state0.conf.rot.at[indices_p, :].set(transforms.rot)
+        new_conf = state0.conf.replace(pos=new_pos, rot=new_rot)
+        return state0.replace(conf=new_conf)
 
 
 # ui (right-left)

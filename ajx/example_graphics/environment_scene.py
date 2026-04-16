@@ -46,6 +46,8 @@ class EnvironmentScene:
         initial_state,
         show_text=True,
         show_fps=True,
+        simulate=True,
+        debug_render=False,
     ):
         self.timestep = env.sim.settings.timestep
         self.environment = env
@@ -69,6 +71,8 @@ class EnvironmentScene:
         self.state_sequence = None
         self.show_text = show_text
         self.show_fps = show_fps
+        self.debug_render = debug_render
+        self.simulate = simulate
 
     def setup(self, base: DirectObject, render):
         def toggle_physics():
@@ -101,24 +105,21 @@ class EnvironmentScene:
         render.set_light(alightNP)
         render.set_light(dlightNP)
 
+        for geometry in self.environment.geometry_list:
+            geometry.create_node(base)
         self.geometry_dict = {
             geometry.name: geometry for geometry in self.environment.geometry_list
         }
         self.hidden_geometry_dict = dict()
-        for rb in self.environment.sim.rigid_body_list:
-            for g_name in rb.geometry:
-                assert (
-                    g_name in self.geometry_dict
-                ), f"Unknown geometry label found. Did you forget to add {g_name} to the geometry list?"
-                geometry = self.geometry_dict[g_name]
-                geometry.create_node(base)
+
+        self.instance_dict = {}
+        # Works
+        self.fill_instance_dict(self.debug_render)
+
         render.flattenLight()
 
         if jax.default_backend() == "gpu":
             logger.warning("Running physics on GPU. CPU is likely faster.")
-
-        for geometry in self.environment.extra_geometry:
-            geometry.create_node(base)
 
         self.text_displays = [
             OnscreenText(
@@ -161,6 +162,39 @@ class EnvironmentScene:
             False,
         )
         self.background_gradient.set_effect(effect)
+
+    def clear_instances(self):
+        for roots in self.instance_dict.values():
+            for root in roots:
+                root.removeNode()
+        self.instance_dict.clear()
+
+    def fill_instance_dict(self, debug):
+        pass
+        for rb in self.environment.sim.rigid_body_list:
+            instances = []
+            geometry_list = rb.geometry
+            if debug:
+                geometry_list = rb.debug_geometry
+            for model_name, local_transform in geometry_list:
+                assert (
+                    model_name in self.geometry_dict
+                ), f"Unknown geometry label found. Did you forget to add {model_name} to the geometry list?"
+                geometry = self.geometry_dict[model_name]
+                instance = geometry.create_instance(
+                    f"{rb.name}.{model_name}", local_transform
+                )
+                instances.append(instance)
+            self.instance_dict[rb.name] = tuple(instances)
+        instances = []
+        for model_name, local_transform in self.environment.extra_geometry:
+            assert (
+                model_name in self.geometry_dict
+            ), f"Unknown geometry label found. Did you forget to add {model_name} to the geometry list?"
+            geometry = self.geometry_dict[model_name]
+            instance = geometry.create_instance(f"world.{model_name}", local_transform)
+            instances.append(instance)
+        self.world_instances = tuple(instances)
 
     def create_gradient(self, sky_color, ground_color, horizon_color=None):
         vertex_format = GeomVertexFormat()
@@ -285,13 +319,15 @@ class EnvironmentScene:
 
     def reset(self):
         self.state = self.initial_state
-        self.observation = self.observe(self.state, -self.u, self.env_param)
+        if self.simulate:
+            self.observation = self.observe(self.state, -self.u, self.env_param)
         self.update_geometry()
 
     def update(self, key_map):
         self.pre_update(key_map)
         if self.physics_is_active:
-            self.update_physics()
+            if self.simulate:
+                self.update_physics()
             self.update_geometry()
 
     def update_geometry(self):
@@ -319,7 +355,6 @@ class EnvironmentScene:
                     self.text_displays[i].setText("")
 
         rb_list = self.environment.sim.rigid_body_list
-        geo_dict = self.geometry_dict
 
         # per timestep/frame:
         pos_np = np.asarray(jax.device_get(self.state.conf.pos))  # (N,3)
@@ -329,9 +364,9 @@ class EnvironmentScene:
             pos = pos_np[i]
             rot = rot_np[i]
             q = Quat(*rot)
-            for g_name in rb.geometry:
-                # TODO: Trigger reset and print error message if NaN value is encountered
-                geo_dict[g_name].node.setPosQuat(Vec3(*pos), q)
+            instances = self.instance_dict[rb.name]
+            for instance in instances:
+                instance.setPosQuat(Vec3(*pos), q)
 
     def pre_update(self, key_map):
         self.u, self.control_state = self.environment.control_func(

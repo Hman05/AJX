@@ -48,11 +48,11 @@ class CartPole(Environment):
             color=[0.0, 0.5, 0.5],
         )
 
-        cart = RigidBody("cart", ("cart_box",))
+        cart = RigidBody("cart", [("cart_box", Transform.unitary())])
         cart_param = RigidBodyParameters.create(
             mass=0.127, inertia_diag=jnp.array([0.02, 0.02, 0.02]), name="cart"
         )
-        self.pendulum = RigidBody("pendulum", ("pendulum_box",))
+        self.pendulum = RigidBody("pendulum", [("pendulum_box", Transform.unitary())])
         pendulum_param = RigidBodyParameters.create(
             mass=0.5, inertia_diag=jnp.array([0.02, 0.02, 0.02]), name="pendulum"
         )
@@ -141,18 +141,18 @@ class CartPole(Environment):
             ),
         )
 
-        self.geometry_list = (self.cart_box, self.pendulum_box)
-
-        self.extra_geometry = (
-            geometry.Box(
-                "rail",
-                30,
-                0.05,
-                0.2,
-                translation=(-cart_half_height, cart_center, 0.0),
-                color=[0.4, 0.1, 0.1],
-            ),
+        self.rail = geometry.Box(
+            "rail",
+            30,
+            0.05,
+            0.2,
+            translation=(-cart_half_height, cart_center, 0.0),
+            color=[0.4, 0.1, 0.1],
         )
+
+        self.geometry_list = (self.cart_box, self.pendulum_box, self.rail)
+
+        self.extra_geometry = (("rail", Transform.unitary()),)
 
     def observation_to_configuration(self, observation, param):
         world_transform = Transform(

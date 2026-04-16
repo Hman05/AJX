@@ -11,8 +11,9 @@ from ajx.tree_util import ParameterNode
 
 @struct.dataclass
 class RigidBody:
-    name: Tuple[str]
-    geometry: Tuple[str]
+    name: str
+    geometry: Sequence[Tuple[str, Transform]]
+    debug_geometry: Sequence[Tuple[str, Transform]] = ()
 
 
 @struct.dataclass
@@ -54,6 +55,10 @@ class Transform(ParameterNode):
         rot_diff = math.quat_mul(self.rot, math.conjugate(other.rot))
         pos_diff = self.pos - other.pos
         return Transform(pos_diff, rot_diff)
+
+    @classmethod
+    def unitary(cls):
+        return Transform(jnp.array([0.0, 0.0, 0.0]), math.Rotations.unitary)
 
 
 @struct.dataclass
@@ -377,6 +382,15 @@ class RigidBodyParameters(ParameterNode):
     )
 
     names_mc = ("x", "y", "z")
+
+    @classmethod
+    def create_empty(cls):
+        return cls(
+            names=(),
+            mass=jnp.zeros([0, 1]),
+            mc=jnp.zeros([0, 3]),
+            inertia=jnp.zeros([0, 6]),
+        )
 
     def get_inertia_matrix(self):
         # Assumes vmap...
