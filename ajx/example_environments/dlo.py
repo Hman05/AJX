@@ -437,7 +437,7 @@ class DLO(Environment):
 
         coupled_constraint_param = CoupledConstraintParameters(
             linear_stiffness=PositiveParam(jnp.ones(6) * 1e5),
-            compliance=jnp.ones(6) * 1e-5,
+            #compliance=jnp.ones(6) * 1e-5,
             quadratic_stiffness=PositiveParam(jnp.ones(6) * 0.0),
             damping=jnp.ones(6) * 2 * self.sim.settings.timestep,
             is_velocity=jnp.zeros(6, dtype=bool),

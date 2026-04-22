@@ -18,6 +18,9 @@ def grouped_fori_loop(groups, body_fun, init_val):
 
 
 def sparse_blockrow_mul_vec(mat, vec, col_sizes, col_offsets):
+    """
+    Intended to compute matrix vector multiplication of type G[s:e, :] @ vec.
+    """
     n_blocks = col_sizes.shape[0]
     res = [
         lax.dynamic_slice(

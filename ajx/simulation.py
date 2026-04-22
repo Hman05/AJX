@@ -25,7 +25,7 @@ from ajx.definitions import (
 )
 from ajx.param import SimulationParameters
 from ajx.pre_step_modifiers import PreStepModifier
-from ajx.projected_gauss_seidel import gauss_seidel_dense
+from ajx.projected_gauss_seidel import projected_gauss_seidel_dense, projected_gauss_seidel_sparse
 from ajx.sensors import Sensor
 
 from ajx.symbolic import (
@@ -33,6 +33,7 @@ from ajx.symbolic import (
     get_schur_fillin_sparsity,
 )
 
+lbda_limits = jnp.tile(jnp.array([-100, 100]), (168, 1)) # To test
 
 class Solver(Enum):
     DENSE_LINEAR = 1
@@ -368,8 +369,13 @@ class Simulation:
 
             # To compute solution
             lbda0 = state.multipliers
-            qdot_next, lbda = gauss_seidel_dense(
-                gvel, lbda0, G_dense, M_inv_dense, Sigma_data, self.h, f_ext.flatten(), b_data, Nit=800
+            qdot_next, lbda = projected_gauss_seidel_dense(
+                gvel, lbda0, G_dense, M_inv_dense, Sigma_data, self.h, f_ext.flatten(), b_data, lbda_limits, Nit=800
+            )
+        elif self.settings.solver == Solver.SPARSE_PGS:
+            lbda0 = state.multipliers
+            qdot_next, lbda = projected_gauss_seidel_sparse(
+                gvel, lbda0, G, M_inv, Sigma_data, self.h, f_ext.flatten(), b_data, lbda_limits, Nit=800
             )
         else:
             raise NotImplementedError
