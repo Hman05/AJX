@@ -520,6 +520,48 @@ class ParameterNode:
             kwargs[f.name] = concatenated
         return cls(**kwargs)
 
+    @classmethod
+    def stack(cls, nodes: Tuple[ParameterNode]):
+        """
+        Stackes multiple homogeneous ParameterNode instances into a
+        stacked ParameterNode.
+
+        All nodes must share the same field structure. Array-valued fields
+        are concatenated along their leading axis, producing a grouped
+        representation. Tuple-valued fields are concatenated elementwise.
+        Other field types are currently unsupported.
+
+        Parameters
+        ----------
+        nodes : Tuple[ParameterNode, ...]
+            Sequence of ParameterNode instances with identical structure.
+
+        Returns
+        -------
+        ParameterNode
+            A new instance whose array fields represent the stacked
+            parameters of all input nodes.
+        """
+        assert len(nodes) > 0
+        first = nodes[0]
+        first_fields = fields(first)
+        assert all(fields(node) == first_fields for node in nodes[1:])
+        assert all(type(node) is cls for node in nodes)
+        shared_fields = first_fields
+        kwargs = {}
+        for f in shared_fields:
+            values = [getattr(node, f.name) for node in nodes]
+            if isinstance(values[0], tuple):
+                concatenated = tuple(item for value in values for item in value)
+            elif isinstance(values[0], jax.Array):
+                concatenated = jnp.stack(values)
+            elif isinstance(values[0], ParameterNode):
+                concatenated = type(values[0]).stack(values)
+            else:
+                raise Exception("Unsupported type")
+            kwargs[f.name] = concatenated
+        return cls(**kwargs)
+
     def create_in_axes(self, mapped_axes: Dict):
         attrs = {}
         for f in fields(self):

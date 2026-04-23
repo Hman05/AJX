@@ -50,11 +50,20 @@ class Transform(ParameterNode):
         pos_delta = self.pos - other.pos
         return jnp.concatenate([pos_delta, rot_delta], axis=None)
 
+    def inverse(self):
+        inv_rot = math.conjugate(self.rot)
+        inv_pos = -math.rotate_vector(inv_rot, self.pos)
+        return Transform(inv_pos, inv_rot)
+
+    def multiply(self, other: Transform):
+        new_rot = math.quat_mul(self.rot, other.rot)
+        rotated_pos = math.rotate_vector(self.rot, other.pos)
+        new_pos = self.pos + rotated_pos
+        return Transform(new_pos, new_rot)
+
     def get_relative(self, other: Transform):
         """Get this transform as seen from other"""
-        rot_diff = math.quat_mul(self.rot, math.conjugate(other.rot))
-        pos_diff = self.pos - other.pos
-        return Transform(pos_diff, rot_diff)
+        return self.multiply(other.inverse())
 
     @classmethod
     def unitary(cls):
@@ -68,6 +77,9 @@ class Configuration(ParameterNode):
     pos: jax.Array
     rot: jax.Array
     scalar: jax.Array = struct.field(default_factory=lambda: jnp.zeros([0]))
+
+    def as_vectorized_transform(self):
+        return Transform(self.pos, self.rot)
 
     def retract(self, update: jax.Array) -> Configuration:
         assert update.shape == (
@@ -146,6 +158,9 @@ class Frame(ParameterNode):
 class Frames(ParameterNode):
     position: jnp.array
     rotation: jnp.array
+
+    def as_vectorized_transform(self):
+        return Transform(self.position, self.rotation)
 
 
 @struct.dataclass

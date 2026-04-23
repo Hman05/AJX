@@ -14,16 +14,21 @@ from ajx import Transform
 class DLOSettings:
     n_segments: int
     segment_halflength: float
+    radius: float
     constraint_type: ConstraintType
+    density: float
     pose_estimate_bodies: List[str] = ()
+    pose_estimate_constraints_a: List[str] = ()
+    pose_estimate_constraints_b: List[str] = ()
     pose_estimate_offsets: List[Transform] = ()
     loose_end: bool = False
-    diameter: float = 0.032
 
     def create(
-        n_segments,
-        length,
-        constraint_type,
+        n_segments: int,
+        length: float,
+        radius: float,
+        constraint_type: ConstraintType,
+        density: float,
         pose_estimate_linear_offsets: List[float],
         gripper1_offset: Transform,
         gripper2_offset: Transform,
@@ -32,9 +37,14 @@ class DLOSettings:
         segment_length = length / n_segments
 
         pose_estimate_bodies = []
+        pose_estimate_constraints_a = []
+        pose_estimate_constraints_b = []
         pose_estimate_offsets = []
         pose_estimate_bodies.append("grip_tool1")
         pose_estimate_offsets.append(gripper1_offset)
+        pose_estimate_constraints_a.append("lock_g1_to_dlo")
+        pose_estimate_constraints_b.append("grip_tool1_lock")
+
         unit_transform = Transform(
             jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
         )
@@ -42,13 +52,29 @@ class DLOSettings:
             i = int(n_segments * displacement / length)
             pose_estimate_bodies.append(f"body{i}")
             pose_estimate_offsets.append(unit_transform)
+
+            if i == n_segments - 1:
+                pose_estimate_constraints_a.append("lock_dlo_to_g2")
+            else:
+                pose_estimate_constraints_a.append(f"lock{i}")
+            if i == 0:
+                pose_estimate_constraints_b.append(f"lock_g1_to_dlo")
+            else:
+                pose_estimate_constraints_b.append(f"lock{i-1}")
+
         pose_estimate_bodies.append("grip_tool2")
         pose_estimate_offsets.append(gripper2_offset)
+        pose_estimate_constraints_a.append("grip_tool2_lock")
+        pose_estimate_constraints_b.append("lock_dlo_to_g2")
         return DLOSettings(
             n_segments,
             0.5 * segment_length,
+            radius,
             constraint_type,
+            density,
             pose_estimate_bodies,
+            pose_estimate_constraints_a,
+            pose_estimate_constraints_b,
             pose_estimate_offsets,
             loose_end,
         )
@@ -60,13 +86,29 @@ class DLOState(ParameterNode):
     gvel: GeneralizedVelocity
     lock_targets: jax.Array
 
+    tangent_restrictions: Tuple[str, ...] = struct.field(
+        pytree_node=False, default=tuple(["conf", "gvel", "lock_targets"])
+    )
+
 
 @struct.dataclass
 class CableParameters(ParameterNode):
-    # Stretch, bend, torsion
-    stiffness: jax.Array
-    damping: jax.Array
-    is_velocity: jax.Array
+    youngs_modulus: float
+    shear_modulus: float
+    damping: float
+
+    def get_stiffness(self, radius, segment_length):
+        area = radius * 2 * jnp.pi
+        area_moment = jnp.pi * radius**4 / 4
+        polar_moment = jnp.pi * radius**4 / 2
+
+        E = self.youngs_modulus
+        G = self.shear_modulus
+
+        stretch_stiffness = E * area / segment_length
+        bend_stiffness = E * area_moment / segment_length
+        twist_stiffness = G * polar_moment / segment_length
+        return stretch_stiffness, bend_stiffness, twist_stiffness
 
 
 DLOSparseParam = create_parameter_node("DLOSparseParam", ("cable_param",))
@@ -80,6 +122,7 @@ class CoupleAsCable(PreStepModifier):
     constraint_ids: jax.Array
     constraint_type: ConstraintType
     segment_length: jax.Array
+    radius: jax.Array
 
     def update_params(self, state: DLOState, u: jax.Array, param: SimulationParameters):
         cable_param: CableParameters = param.sparse_param.cable_param
@@ -87,16 +130,28 @@ class CoupleAsCable(PreStepModifier):
         slice_end = self.target_slice[1]
         constraint_param = param.constraint_param
 
+        area = self.radius * 2 * jnp.pi
+        area_moment = jnp.pi * self.radius**4 / 4
+        polar_moment = jnp.pi * self.radius**4 / 2
+
+        E = cable_param.youngs_modulus
+        G = cable_param.shear_modulus
+
+        stretch_stiffness = E * area / self.segment_length
+        bend_stiffness = 1e7 * area_moment / self.segment_length
+        twist_stiffness = G * polar_moment / self.segment_length
+
         stiffness = jnp.array(
             [
-                cable_param.stiffness[0] / self.segment_length,
-                1e8,
-                1e8,
-                cable_param.stiffness[2] / self.segment_length,
-                cable_param.stiffness[1] / self.segment_length,
-                cable_param.stiffness[1] / self.segment_length,
+                stretch_stiffness,
+                1e5,
+                1e5,
+                twist_stiffness,
+                bend_stiffness,
+                bend_stiffness,
             ]
         )
+
         constraint_param = constraint_param.replace(
             compliance=constraint_param.compliance.at[slice_begin:slice_end].set(
                 1 / stiffness
@@ -105,11 +160,6 @@ class CoupleAsCable(PreStepModifier):
         constraint_param = constraint_param.replace(
             damping=constraint_param.damping.at[slice_begin:slice_end].set(
                 cable_param.damping
-            )
-        )
-        constraint_param = constraint_param.replace(
-            is_velocity=constraint_param.is_velocity.at[slice_begin:slice_end].set(
-                cable_param.is_velocity
             )
         )
         new_param = param.replace(constraint_param=constraint_param)
@@ -203,15 +253,7 @@ class DLO(Environment):
         arms_param = []
         self.lock_joints = []
         lock_joint_param = []
-        gradient_start = jnp.array([1.0, 0.0, 0.0])
-        gradient_end = jnp.array([0.0, 1.0, 1.0])
-        n = self.env_settings.n_segments
         bl = self.env_settings.segment_halflength
-        gradient = gradient_start - jnp.outer(
-            jnp.arange(n), (gradient_start - gradient_end) / n
-        )
-        density = 10.0
-        length = 2 * self.env_settings.segment_halflength * self.env_settings.n_segments
         grapple_box_length = 0.0795
 
         script_dir = os.path.dirname(__file__)
@@ -225,8 +267,8 @@ class DLO(Environment):
         reference_box = geometry.Box(
             f"grip_tool1_box",
             grapple_box_length,
-            0.6,
             0.3,
+            0.15,
             translation=(0.0, 0.0, 0.0),
             color=(0.1, 0.1, 0.1),
         )
@@ -276,8 +318,9 @@ class DLO(Environment):
                 ("axes_model", tool1_to_dlo_frame),
             ],
         )
+        density = self.env_settings.density
         grip_tool1_param = RigidBodyParameters.create(
-            mass=density * 0.4 * 0.4 * grapple_box_length,
+            mass=density * 0.2 * 0.2 * grapple_box_length,
             inertia_diag=reference_box.get_diag_inertia(density),
             name="grip_tool1",
         )
@@ -292,7 +335,7 @@ class DLO(Environment):
             ],
         )
         grip_tool2_param = RigidBodyParameters.create(
-            mass=density * 0.4 * 0.4 * grapple_box_length,
+            mass=density * 0.2 * 0.2 * grapple_box_length,
             inertia_diag=reference_box.get_diag_inertia(density),
             name="grip_tool2",
         )
@@ -302,9 +345,9 @@ class DLO(Environment):
             capsule_path,
             rotation=math.Rotations.y_to_x,
             scale=(
-                0.5 * self.env_settings.diameter,
+                self.env_settings.radius,
                 self.env_settings.segment_halflength,
-                0.5 * self.env_settings.diameter,
+                self.env_settings.radius,
             ),
             color=(0.1, 0.1, 0.5),
         )
@@ -327,15 +370,33 @@ class DLO(Environment):
                     ("marker_model", Transform.unitary()),
                 ]
 
-            box_old = geometry.Box(
-                f"box_old",
-                self.env_settings.segment_halflength,
-                0.1,
-                0.1,
-                translation=(0.0, 0.0, 0.0),
+            area = jnp.pi * (self.env_settings.radius) ** 2
+            # Cylinder mass
+            mass_cyl = (
+                self.env_settings.density
+                * area
+                * self.env_settings.segment_halflength
+                * 2
             )
-            mass = density * 0.1 * 0.1 * self.env_settings.segment_halflength
-            inertia = box_old.get_diag_inertia(density)
+            mass_sphere = (
+                self.env_settings.density
+                * 4
+                * jnp.pi
+                * (self.env_settings.radius) ** 3
+                / 3
+            )
+            mass = mass_cyl + mass_sphere
+            inertia_cyl_x = 0.5 * mass * self.env_settings.radius**2
+            inertia_cyl_yz = (
+                1
+                / 12
+                * mass
+                * (
+                    3 * self.env_settings.radius**2
+                    + (self.env_settings.segment_halflength * 2) ** 2
+                )
+            )
+            inertia = jnp.array([inertia_cyl_x, inertia_cyl_yz, inertia_cyl_yz])
 
             arms.append(
                 RigidBody(
@@ -358,8 +419,8 @@ class DLO(Environment):
         first_lock_param = ConstraintParameters.create_locked_ext(
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.unitary),
             frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.unitary),
-            compliance_lin=1e-5,
-            compliance_rot=1e-5,
+            compliance_lin=1e-8,
+            compliance_rot=1e-8,
             viscous_compliance_lin=1e-3,
             viscous_compliance_rot=1e-2,
             damping=2 * self.reference_timestep,
@@ -380,7 +441,7 @@ class DLO(Environment):
             ConstraintParameters.create_locked(
                 frame_a=Frame(tool1_to_dlo_frame.pos, tool1_to_dlo_frame.rot),
                 frame_b=Frame(jnp.array([-bl, 0.0, 0.0]), math.Rotations.unitary),
-                compliance=1e-5,
+                compliance=1e-8,
                 viscous_compliance=1e-5,
                 damping=2 * self.reference_timestep,
                 offset=0.0,
@@ -419,7 +480,7 @@ class DLO(Environment):
             ConstraintParameters.create_locked(
                 frame_a=Frame(jnp.array([bl, 0.0, 0.0]), math.Rotations.unitary),
                 frame_b=Frame(tool2_to_dlo_frame.pos, tool2_to_dlo_frame.rot),
-                compliance=1e-5,
+                compliance=1e-8,
                 viscous_compliance=1e-5,
                 damping=2 * self.reference_timestep,
                 offset=0.0,
@@ -443,8 +504,8 @@ class DLO(Environment):
                 math.Rotations.unitary,
             ),
             frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.unitary),
-            compliance_lin=1e-5,
-            compliance_rot=1e-5,
+            compliance_lin=1e-8,
+            compliance_rot=1e-8,
             viscous_compliance_lin=1e-3,
             viscous_compliance_rot=1e-2,
             damping=2 * self.reference_timestep,
@@ -482,6 +543,7 @@ class DLO(Environment):
             constraint_ids=jnp.arange(0, n_segment_locks)[:, None],
             constraint_type=self.env_settings.constraint_type,
             segment_length=self.env_settings.segment_halflength * 2,
+            radius=self.env_settings.radius,
         )
 
         pre_step_modifiers = (
@@ -490,7 +552,16 @@ class DLO(Environment):
             couple_constraints,
         )
 
-        sensors = ()
+        sensor_list = []
+        for i, body in enumerate(self.env_settings.pose_estimate_bodies):
+            pose_encoder = PoseEncoder(
+                f"pose_encoder{i}",
+                body,
+                self.env_settings.pose_estimate_offsets[i],
+            )
+            sensor_list.append(pose_encoder)
+
+        sensors = tuple(sensor_list)
 
         self.sim = Simulation(
             sim_settings,
@@ -501,9 +572,9 @@ class DLO(Environment):
         )
 
         coupled_constraint_param = CableParameters(
-            stiffness=jnp.array([1e5, 1e5, 1e5]),
-            damping=jnp.ones(6) * 2 * self.sim.settings.timestep * 4,
-            is_velocity=jnp.zeros(6, dtype=bool),
+            youngs_modulus=1e8,
+            shear_modulus=1e8 / (2 * (1 + 0.333)),
+            damping=2 * self.sim.settings.timestep,
         )
 
         self.default_param = SimulationParameters(
@@ -563,6 +634,203 @@ class DLO(Environment):
             ]
         )
         return DLOState(initial_conf, initial_gvel, targets)
+
+    def convert_tracking_transforms_to_body_transforms(
+        self, tracking_transforms: Transform
+    ):
+        offset_transforms = Transform(
+            pos=jnp.stack([po.pos for po in self.env_settings.pose_estimate_offsets]),
+            rot=jnp.stack([po.rot for po in self.env_settings.pose_estimate_offsets]),
+        )
+        tracking_transforms2 = Transform(
+            pos=jnp.stack([po.pos for po in tracking_transforms]),
+            rot=jnp.stack([po.rot for po in tracking_transforms]),
+        )
+
+        body_transforms = vmap(Transform.get_relative)(
+            tracking_transforms2, offset_transforms
+        )
+        return body_transforms
+
+    def convert_tracking_transforms_to_body_transforms2(
+        self, tracking_transforms: Transform
+    ):
+        offset_transforms = Transform(
+            pos=jnp.stack([po.pos for po in self.env_settings.pose_estimate_offsets]),
+            rot=jnp.stack([po.rot for po in self.env_settings.pose_estimate_offsets]),
+        )
+        body_transforms = vmap(Transform.get_relative)(
+            tracking_transforms, offset_transforms
+        )
+        return body_transforms
+
+    def get_state_by_body_interpolation(
+        self, param: SimulationParameters, transforms: Transform
+    ):
+        # Find "relaxed-offset" at interpolation transforms
+        state0 = self.get_neutral_state(param)
+        indices_p = [
+            param.rigid_body_param.names.index(name)
+            for name in self.env_settings.pose_estimate_bodies
+        ]
+        off0 = np.array(state0.conf.pos[:, 0])
+        off0_p = off0[jnp.array(indices_p)]
+
+        # Begin with just xyz-interpolation
+        from scipy.interpolate import CubicSpline, interp1d
+
+        cs = CubicSpline(off0_p, transforms.pos)  # axis=0 if fp is (N, ...)
+        new_pos = cs(off0)
+
+        # Rotation-interpolation
+        qp = transforms.rot
+        new_rot = math.quat_interp(off0, off0_p, qp)
+
+        new_conf = Configuration(jnp.array(new_pos), jnp.array(new_rot))
+
+        new_state = state0.replace(conf=new_conf)
+
+        targets = jnp.stack(
+            [
+                self.first_lock.place_frame_a(new_state, param).flatten(),
+                self.last_lock.place_frame_a(new_state, param).flatten(),
+            ]
+        )
+        new_state = new_state.replace(lock_targets=targets)
+
+        return new_state
+
+    def get_state_by_interface_interpolation(
+        self, param: SimulationParameters, transforms: Transform
+    ):
+        # Find "relaxed-offset" at interpolation transforms
+        state0 = self.get_neutral_state(param)
+        indices_body = [
+            param.rigid_body_param.names.index(name)
+            for name in self.env_settings.pose_estimate_bodies
+        ]
+        # These are the offsets that we transform to and from...
+
+        # First frame is not included in offsets a (DLO + last lock)
+        frame_offsets_a = param.constraint_param.frame_a.as_vectorized_transform()[1:]
+        # Last frame is not included in offsets b (DLO + first lock)
+        frame_offsets_b = param.constraint_param.frame_b.as_vectorized_transform()[:-1]
+
+        constraint_transforms_a = vmap(Transform.multiply)(
+            Transform(state0.conf.pos, state0.conf.rot), frame_offsets_a
+        )
+        constraint_transforms_b = vmap(Transform.multiply)(
+            Transform(state0.conf.pos, state0.conf.rot), frame_offsets_b
+        )
+
+        off00a = constraint_transforms_a.pos[:, 0]
+        off00b = constraint_transforms_b.pos[:, 0]
+        last_dlo_id = indices_body[-2]
+        first_dlo_id = indices_body[1]
+        off0a = constraint_transforms_a.pos[: last_dlo_id + 1, 0]
+        off0b = constraint_transforms_b.pos[first_dlo_id:, 0]
+
+        off0a_p = off00a[jnp.array(indices_body[:-1])]
+        off0b_p = off00b[jnp.array(indices_body[1:])]
+
+        # Begin with just xyz-interpolation
+        from scipy.interpolate import CubicSpline, interp1d
+
+        # Frame A
+        cs = interp1d(
+            off0a_p, transforms[0].pos[:-1], kind="linear", axis=0
+        )  # axis=0 if fp is (N, ...)
+        cs = CubicSpline(off0a_p, transforms[0].pos[:-1])
+        new_pos_a = cs(off0a)
+        new_rot_a = math.quat_interp(off0a, off0a_p, transforms[0].rot[:-1])
+        new_transforms_a = Transform(new_pos_a, new_rot_a)
+
+        body_locations_a = vmap(Transform.get_relative)(
+            new_transforms_a, frame_offsets_a[: indices_body[-2] + 1]
+        )
+        # Frame B
+        cs = interp1d(
+            off0b_p, transforms[1].pos[1:], kind="linear", axis=0
+        )  # axis=0 if fp is (N, ...)
+        cs = CubicSpline(off0b_p, transforms[1].pos[1:])
+        new_pos_b = cs(off0b)
+        new_rot_b = math.quat_interp(off0b, off0b_p, transforms[1].rot[1:])
+        new_transforms_b = Transform(new_pos_b, new_rot_b)
+
+        # T[w->f] = T[w->b] @ T[b->f]
+        # T[w->b] = T[w->f] @ inv(T[b->f])
+        body_locations_b = vmap(Transform.get_relative)(
+            new_transforms_b, frame_offsets_b[indices_body[1] :]
+        )
+        a_only_pos = body_locations_a.pos[:first_dlo_id]
+        a_only_rot = body_locations_a.rot[:first_dlo_id]
+        a_shared_pos = body_locations_a.pos[first_dlo_id:]
+        a_shared_rot = body_locations_a.rot[first_dlo_id:]
+        b_only_pos = body_locations_b.pos[last_dlo_id - first_dlo_id + 1 :]
+        b_only_rot = body_locations_b.rot[last_dlo_id - first_dlo_id + 1 :]
+        b_shared_pos = body_locations_b.pos[: last_dlo_id - first_dlo_id + 1]
+        b_shared_rot = body_locations_b.rot[: last_dlo_id - first_dlo_id + 1]
+
+        shared_pos = (a_shared_pos + b_shared_pos) / 2
+        delta = vmap(math.quat_residual)(b_shared_rot, a_shared_rot)
+        half_step = vmap(math.from_rotation_vector)(0.5 * delta)
+        shared_rot = vmap(math.quat_mul)(half_step, a_shared_rot)
+        full_pos = jnp.concatenate([a_only_pos, shared_pos, b_only_pos])
+        full_rot = jnp.concatenate([a_only_rot, shared_rot, b_only_rot])
+
+        # Go from frames to body coordinates
+        new_conf = Configuration(
+            pos=full_pos,
+            rot=full_rot,
+        )
+
+        new_state = state0.replace(conf=new_conf)
+
+        targets = jnp.stack(
+            [
+                self.first_lock.place_frame_a(new_state, param).flatten(),
+                self.last_lock.place_frame_a(new_state, param).flatten(),
+            ]
+        )
+        new_state = new_state.replace(lock_targets=targets)
+
+        return new_state
+
+    def orient_segments_for_no_shear_displacement(self, state, param):
+        def shear_residual(state):
+            force = self.sim.inverse_dynamics(state, state.gvel, jnp.zeros([12]), param)
+            shear_force = force.reshape(-1, 6)[..., 1:2]
+            return shear_force
+
+        test = shear_residual(state)
+        pass
+
+    def convert_body_transforms_to_frame_transforms(
+        self, param: SimulationParameters, body_transforms: Transform
+    ):
+        indices_a = [
+            param.constraint_param.names.index(name)
+            for name in self.env_settings.pose_estimate_constraints_a
+        ]
+        indices_b = [
+            param.constraint_param.names.index(name)
+            for name in self.env_settings.pose_estimate_constraints_b
+        ]
+        frame_offsets_a = param.constraint_param.frame_a.as_vectorized_transform()[
+            jnp.array(indices_a)
+        ]
+        frame_offsets_b = param.constraint_param.frame_b.as_vectorized_transform()[
+            jnp.array(indices_b)
+        ]
+
+        constraint_transforms_a = vmap(Transform.multiply)(
+            body_transforms, frame_offsets_a
+        )
+        constraint_transforms_b = vmap(Transform.multiply)(
+            body_transforms, frame_offsets_b
+        )
+
+        return constraint_transforms_a, constraint_transforms_b
 
     def control_help_strings(self):
         return [

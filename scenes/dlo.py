@@ -17,23 +17,37 @@ if __name__ == "__main__":
     timestep = 0.016667
     grippermc_to_marker = jnp.array([0.0478024, 0, 0])
 
+    marker_offsets = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55]
+    n_marker_segments = len(marker_offsets)
+    n_segments_between_markers = 11
+    n_segments = (
+        n_segments_between_markers * (n_marker_segments + 1) + n_marker_segments
+    )
+    print(f"n_segments: {n_segments}")
     environment = DLO(
         sim_settings=SimulationSettings(timestep, True, Solver.DENSE_LINEAR),
         env_settings=DLOSettings.create(
-            n_segments=50,
+            n_segments=n_segments,
             length=0.6,
+            radius=0.015,
             constraint_type=ConstraintType.SE3.value,
-            pose_estimate_linear_offsets=[0.10, 0.20, 0.30, 0.40, 0.50],
+            density=1000,
+            pose_estimate_linear_offsets=marker_offsets,
             gripper1_offset=Transform(grippermc_to_marker, math.Rotations.unitary),
             gripper2_offset=Transform(-grippermc_to_marker, math.Rotations.unitary),
             loose_end=False,
         ),
     )
 
+    nu = 0.333
+    E = 1e7
     cable_param = CableParameters(
-        stiffness=jnp.array([1e3, 1e0, 1e0]),
+        youngs_modulus=E,
+        shear_modulus=E / (2 * (1 + nu)),
         damping=environment.default_param.sparse_param.cable_param.damping,
-        is_velocity=environment.default_param.sparse_param.cable_param.is_velocity,
+    )
+    stiffness = cable_param.get_stiffness(
+        0.015, environment.env_settings.segment_halflength * 2
     )
 
     env_param = environment.default_param.tree_replace(
