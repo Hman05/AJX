@@ -25,15 +25,18 @@ from ajx.definitions import (
 )
 from ajx.param import SimulationParameters
 from ajx.pre_step_modifiers import PreStepModifier
-from ajx.projected_gauss_seidel import projected_gauss_seidel_dense, projected_gauss_seidel_sparse
+from ajx.projected_gauss_seidel import (
+    projected_gauss_seidel_dense,
+    projected_gauss_seidel_sparse,
+)
 from ajx.sensors import Sensor
-
 from ajx.symbolic import (
     get_constraint_sparsity,
     get_schur_fillin_sparsity,
 )
 
-lbda_limits = jnp.tile(jnp.array([-100, 100]), (168, 1)) # To test
+lbda_limits = jnp.tile(jnp.array([-100, 100]), (168, 1))  # To test
+
 
 class Solver(Enum):
     DENSE_LINEAR = 1
@@ -142,7 +145,9 @@ class Simulation:
         return state, self._force_solver(state, f_ext, param)
 
     @partial(jit, static_argnums=0)
-    def post_step(self, state: State, gvel_next: GeneralizedVelocity, multipliers: jax.Array) -> State:
+    def post_step(
+        self, state: State, gvel_next: GeneralizedVelocity, multipliers: jax.Array
+    ) -> State:
         """
         Update the state using the given velocity update.
 
@@ -182,9 +187,7 @@ class Simulation:
             scalar=scalar_next,
         )
         state_next = state.replace(
-            conf=conf_next,
-            gvel=gvel_next,
-            multipliers=multipliers
+            conf=conf_next, gvel=gvel_next, multipliers=multipliers
         )
         return state_next
 
@@ -370,12 +373,30 @@ class Simulation:
             # To compute solution
             lbda0 = state.multipliers
             qdot_next, lbda = projected_gauss_seidel_dense(
-                gvel, lbda0, G_dense, M_inv_dense, Sigma_data, self.h, f_ext.flatten(), b_data, lbda_limits, Nit=800
+                gvel,
+                lbda0,
+                G_dense,
+                M_inv_dense,
+                Sigma_data,
+                self.h,
+                f_ext.flatten(),
+                b_data,
+                lbda_limits,
+                Nit=400,
             )
         elif self.settings.solver == Solver.SPARSE_PGS:
             lbda0 = state.multipliers
             qdot_next, lbda = projected_gauss_seidel_sparse(
-                gvel, lbda0, G, M_inv, Sigma_data, self.h, f_ext.flatten(), b_data, lbda_limits, Nit=800
+                gvel,
+                lbda0,
+                G,
+                M_inv,
+                Sigma_data,
+                self.h,
+                f_ext.flatten(),
+                b_data,
+                lbda_limits,
+                Nit=400,
             )
         else:
             raise NotImplementedError
