@@ -26,7 +26,7 @@ The following Python packages have to be installed to run the files
 - [loguru](https://loguru.readthedocs.io/en/stable/)
 - [panda3D](https://www.panda3d.org/) (used in **`scenes`**)
 - [matplotlib](https://matplotlib.org/) (used in **`notebooks`**)
-- [imageio-ffmpeg](https://imageio.readthedocs.io/en/stable/) (used to create animations in **`notebooks`**)
+- [imageio](https://imageio.readthedocs.io/en/stable/) (used to create animations in **`notebooks`**. Install with **`pip install imageio[ffmpeg]`**)
 
 ### Running scripts
 
