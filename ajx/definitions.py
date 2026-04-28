@@ -32,8 +32,8 @@ class Transform(ParameterNode):
         return Configuration(self.pos[None], self.rot[None])
 
     def tangent_size(self):
-        assert len(self.pos.shape) == 1
-        assert len(self.rot.shape) == 1
+        assert self.pos.shape == (3,)
+        assert self.rot.shape == (4,)
         return 6
 
     def retract(self, delta):
@@ -57,8 +57,7 @@ class Transform(ParameterNode):
 
     def multiply(self, other: Transform):
         new_rot = math.quat_mul(self.rot, other.rot)
-        rotated_pos = math.rotate_vector(self.rot, other.pos)
-        new_pos = self.pos + rotated_pos
+        new_pos = math.rotate_vector(self.rot, other.pos) + self.pos
         return Transform(new_pos, new_rot)
 
     def get_relative(self, other: Transform):

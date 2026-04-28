@@ -11,6 +11,7 @@ class ConstraintType(Enum):
     HINGE = 0
     PRISMATIC = 1
     SE3 = 2
+    BEND_TWIST = 3
 
 
 @jit

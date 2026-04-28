@@ -27,7 +27,6 @@ class DLOSettings:
         n_segments: int,
         length: float,
         radius: float,
-        constraint_type: ConstraintType,
         density: float,
         pose_estimate_linear_offsets: List[float],
         gripper1_offset: Transform,
@@ -70,7 +69,7 @@ class DLOSettings:
             n_segments,
             0.5 * segment_length,
             radius,
-            constraint_type,
+            ConstraintType.BEND_TWIST.value,
             density,
             pose_estimate_bodies,
             pose_estimate_constraints_a,
@@ -138,14 +137,15 @@ class CoupleAsCable(PreStepModifier):
         G = cable_param.shear_modulus
 
         stretch_stiffness = E * area / self.segment_length
-        bend_stiffness = 1e7 * area_moment / self.segment_length
+        bend_stiffness = E * area_moment / self.segment_length
         twist_stiffness = G * polar_moment / self.segment_length
+        shear_stiffness = 1e9
 
         stiffness = jnp.array(
             [
                 stretch_stiffness,
-                1e5,
-                1e5,
+                shear_stiffness,
+                shear_stiffness,
                 twist_stiffness,
                 bend_stiffness,
                 bend_stiffness,
@@ -292,6 +292,7 @@ class DLO(Environment):
             f"axes_model",
             axes_path,
             scale=(0.03, 0.03, 0.03),
+            rotation=math.Rotations.z_to_y,
         )
 
         tool1_model_local_transform = Transform(
@@ -378,14 +379,7 @@ class DLO(Environment):
                 * self.env_settings.segment_halflength
                 * 2
             )
-            mass_sphere = (
-                self.env_settings.density
-                * 4
-                * jnp.pi
-                * (self.env_settings.radius) ** 3
-                / 3
-            )
-            mass = mass_cyl + mass_sphere
+            mass = mass_cyl
             inertia_cyl_x = 0.5 * mass * self.env_settings.radius**2
             inertia_cyl_yz = (
                 1
@@ -414,7 +408,7 @@ class DLO(Environment):
         self.first_lock = OneBodyConstraint(
             name=f"grip_tool1_lock",
             body="grip_tool1",
-            constraint_type=self.env_settings.constraint_type,
+            constraint_type=ConstraintType.SE3.value,
         )
         first_lock_param = ConstraintParameters.create_locked_ext(
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.unitary),
@@ -490,7 +484,7 @@ class DLO(Environment):
         self.last_lock = OneBodyConstraint(
             name=f"grip_tool2_lock",
             body=f"grip_tool2",
-            constraint_type=self.env_settings.constraint_type,
+            constraint_type=ConstraintType.SE3.value,
         )
         last_lock_param = ConstraintParameters.create_locked_ext(
             frame_a=Frame(
@@ -604,7 +598,9 @@ class DLO(Environment):
             ]
         )
 
-        self.extra_geometry = [("ground", Transform.unitary())]
+        self.extra_geometry = [
+            ("ground", Transform.unitary()),
+        ]
 
     def observation_to_configuration(self, observation, param):
         world_transform = Transform(
@@ -642,14 +638,16 @@ class DLO(Environment):
             pos=jnp.stack([po.pos for po in self.env_settings.pose_estimate_offsets]),
             rot=jnp.stack([po.rot for po in self.env_settings.pose_estimate_offsets]),
         )
-        tracking_transforms2 = Transform(
+        marker_transforms2 = Transform(
             pos=jnp.stack([po.pos for po in tracking_transforms]),
             rot=jnp.stack([po.rot for po in tracking_transforms]),
         )
+        marker_to_body = vmap(Transform.inverse)(offset_transforms)
+        # T[world->marker] = T[world->body] @ T[body->marker]
+        # which implies
+        # T[world->body] = T[world->marker] @ T[marker->body]
 
-        body_transforms = vmap(Transform.get_relative)(
-            tracking_transforms2, offset_transforms
-        )
+        body_transforms = vmap(Transform.multiply)(marker_transforms2, marker_to_body)
         return body_transforms
 
     def convert_tracking_transforms_to_body_transforms2(
@@ -659,9 +657,8 @@ class DLO(Environment):
             pos=jnp.stack([po.pos for po in self.env_settings.pose_estimate_offsets]),
             rot=jnp.stack([po.rot for po in self.env_settings.pose_estimate_offsets]),
         )
-        body_transforms = vmap(Transform.get_relative)(
-            tracking_transforms, offset_transforms
-        )
+        marker_to_body = vmap(Transform.inverse)(offset_transforms)
+        body_transforms = vmap(Transform.multiply)(tracking_transforms, marker_to_body)
         return body_transforms
 
     def get_state_by_body_interpolation(
@@ -745,6 +742,9 @@ class DLO(Environment):
         new_rot_a = math.quat_interp(off0a, off0a_p, transforms[0].rot[:-1])
         new_transforms_a = Transform(new_pos_a, new_rot_a)
 
+        # T[world->frame] = T[world->body] @ T[body->frame]
+        # which implies
+        # T[world->body] = T[world->frame] @T[frame->body]
         body_locations_a = vmap(Transform.get_relative)(
             new_transforms_a, frame_offsets_a[: indices_body[-2] + 1]
         )
@@ -796,14 +796,25 @@ class DLO(Environment):
 
         return new_state
 
-    def orient_segments_for_no_shear_displacement(self, state, param):
-        def shear_residual(state):
-            force = self.sim.inverse_dynamics(state, state.gvel, jnp.zeros([12]), param)
-            shear_force = force.reshape(-1, 6)[..., 1:2]
-            return shear_force
+    def relax_shear_displacement(self, state, param):
+        # Simulate the system for a few systems to avoid shear displacement
+        test_param = param.tree_replace(
+            src={
+                "sparse_param.cable_param.youngs_modulus": 1e0,
+                "sparse_param.cable_param.shear_modulus": 1e0,
+                "rigid_body_param.mass": param.rigid_body_param.mass.at[:].set(1e4),
+                "gravity": jnp.array([0.0, 0.0, 0.0]),
+            }
+        )
+        horizon = 10
+        # Simulation loop
+        for i in range(horizon):
+            # Step the environment and store the observation
+            new_state, _ = jax.jit(self.step)(state, jnp.zeros([12]), test_param)
+            new_conf = new_state.conf.replace(pos=state.conf.pos)
+            state = new_state.replace(conf=new_conf)
 
-        test = shear_residual(state)
-        pass
+        return state
 
     def convert_body_transforms_to_frame_transforms(
         self, param: SimulationParameters, body_transforms: Transform
@@ -905,23 +916,6 @@ class DLO(Environment):
             motor_1_to_12 = jnp.concatenate([motor7_to_12, motor1_to_6])
         control_state = (control_first, switch_is_down)
         return motor_1_to_12, control_state
-
-    def convert_tracking_transforms_to_body_transforms(
-        self, tracking_transforms: Transform
-    ):
-        offset_transforms = Transform(
-            pos=jnp.stack([po.pos for po in self.env_settings.pose_estimate_offsets]),
-            rot=jnp.stack([po.rot for po in self.env_settings.pose_estimate_offsets]),
-        )
-        tracking_transforms2 = Transform(
-            pos=jnp.stack([po.pos for po in tracking_transforms]),
-            rot=jnp.stack([po.rot for po in tracking_transforms]),
-        )
-
-        body_transforms = vmap(Transform.get_relative)(
-            tracking_transforms2, offset_transforms
-        )
-        return body_transforms
 
     def get_state_with_floating_markers(
         self, param: SimulationParameters, transforms: Transform

@@ -19,7 +19,7 @@ if __name__ == "__main__":
 
     marker_offsets = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55]
     n_marker_segments = len(marker_offsets)
-    n_segments_between_markers = 11
+    n_segments_between_markers = 6
     n_segments = (
         n_segments_between_markers * (n_marker_segments + 1) + n_marker_segments
     )
@@ -30,7 +30,6 @@ if __name__ == "__main__":
             n_segments=n_segments,
             length=0.6,
             radius=0.015,
-            constraint_type=ConstraintType.SE3.value,
             density=1000,
             pose_estimate_linear_offsets=marker_offsets,
             gripper1_offset=Transform(grippermc_to_marker, math.Rotations.unitary),
@@ -40,7 +39,7 @@ if __name__ == "__main__":
     )
 
     nu = 0.333
-    E = 1e7
+    E = 1e8
     cable_param = CableParameters(
         youngs_modulus=E,
         shear_modulus=E / (2 * (1 + nu)),
