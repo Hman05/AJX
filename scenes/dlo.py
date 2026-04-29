@@ -39,7 +39,7 @@ if __name__ == "__main__":
     )
 
     nu = 0.333
-    E = 1e8
+    E = 1e7
     cable_param = CableParameters(
         youngs_modulus=E,
         shear_modulus=E / (2 * (1 + nu)),

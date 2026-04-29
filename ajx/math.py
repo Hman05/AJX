@@ -326,3 +326,28 @@ def slerp(q0, q1, t, eps=1e-8):
     s1 = sin_theta / sin_theta_0
 
     return (s0[..., None] * q0) + (s1[..., None] * q1)
+
+
+def quat_to_euler(q: jax.Array) -> jax.Array:
+    """Quaternion -> Euler (ZYX intrinsic: yaw, pitch, roll), radians.
+    Returns [yaw, pitch, roll].
+    """
+    w, x, y, z = q
+
+    # Roll (x-axis rotation)
+    roll = jnp.arctan2(
+        2 * (w * x + y * z),
+        1 - 2 * (x * x + y * y),
+    )
+
+    # Pitch (y-axis rotation)
+    sinp = 2 * (w * y - z * x)
+    pitch = jnp.arcsin(jnp.clip(sinp, -1.0, 1.0))
+
+    # Yaw (z-axis rotation)
+    yaw = jnp.arctan2(
+        2 * (w * z + x * y),
+        1 - 2 * (y * y + z * z),
+    )
+
+    return jnp.array([yaw, pitch, roll])
