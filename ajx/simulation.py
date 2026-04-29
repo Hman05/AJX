@@ -26,7 +26,7 @@ from ajx.definitions import (
 from ajx.param import SimulationParameters
 from ajx.pre_step_modifiers import PreStepModifier
 from ajx.projected_gauss_seidel import (
-    projected_gauss_seidel_dense,
+    projected_gauss_seidel_block_dense,
     projected_gauss_seidel_sparse,
 )
 from ajx.sensors import Sensor
@@ -34,8 +34,6 @@ from ajx.symbolic import (
     get_constraint_sparsity,
     get_schur_fillin_sparsity,
 )
-
-lbda_limits = jnp.tile(jnp.array([-100, 100]), (168, 1))  # To test
 
 
 class Solver(Enum):
@@ -50,6 +48,7 @@ class SimulationSettings:
     timestep: float
     use_gyroscopic: bool = False
     solver: Solver = Solver.DENSE_LINEAR
+    pgs_iterations: int = 100
     do_jit: bool = True
 
 
@@ -340,6 +339,18 @@ class Simulation:
         M_stacked, M_inv, G, Sigma_data, b_data = self._assemble_blocks(state, param)
         n_rb_dof = 6 * state.gvel.data.shape[0]
 
+        if (
+            self.settings.solver == Solver.SPARSE_PGS
+            or self.settings.solver == Solver.DENSE_PGS
+        ):
+            lbda_limits = jnp.tile(
+                jnp.array([-np.inf, np.inf]),
+                (
+                    Sigma_data.size,
+                    1,
+                ),  # jnp.array([-np.inf, np.inf]), (Sigma_data.size, 1)
+            )  # Set some default, this should be changed such it is collected from the constraints.
+
         if self.settings.solver == Solver.SPARSE_LINEAR:
             S_sparse, rsi_dict = self._schur_reduction(G, M_inv, Sigma_data)
             M_inv_f = M_inv.mul_vector(f_ext)
@@ -372,17 +383,18 @@ class Simulation:
 
             # To compute solution
             lbda0 = state.multipliers
-            qdot_next, lbda = projected_gauss_seidel_dense(
+            qdot_next, lbda = projected_gauss_seidel_block_dense(
                 gvel,
                 lbda0,
                 G_dense,
+                6,
                 M_inv_dense,
                 Sigma_data,
                 self.h,
                 f_ext.flatten(),
                 b_data,
                 lbda_limits,
-                Nit=400,
+                Nit=self.settings.pgs_iterations,
             )
         elif self.settings.solver == Solver.SPARSE_PGS:
             lbda0 = state.multipliers
@@ -396,7 +408,7 @@ class Simulation:
                 f_ext.flatten(),
                 b_data,
                 lbda_limits,
-                Nit=400,
+                Nit=self.settings.pgs_iterations,
             )
         else:
             raise NotImplementedError

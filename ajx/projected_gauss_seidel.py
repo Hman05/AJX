@@ -75,7 +75,6 @@ def projected_gauss_seidel_dense(
 
         # Projection step
         old_lbda = lbda[c]
-        # lbda = lbda.at[c].add(delta_lbda)
         lbda = lbda.at[c].set(
             jnp.clip(lbda[c] + delta_lbda, lbda_limits[c, 0], lbda_limits[c, 1])
         )
@@ -83,6 +82,114 @@ def projected_gauss_seidel_dense(
         # Update step with correct delta lambda
         delta_lbda_update = lbda[c] - old_lbda
         u = u + M_inv_GT[:, c] * delta_lbda_update
+
+        return (u, lbda)
+
+    def pgs_body(j, state):
+        """
+        This is the outer loop body, handling the 'Nit' iterations
+        """
+        return jax.lax.fori_loop(0, nc, constraint_body, state)
+
+    lbda = lbda0
+    u = gvel + h * M_inv @ f_ext + M_inv_GT @ lbda
+
+    u, lbda = jax.lax.fori_loop(0, Nit, pgs_body, (u, lbda))
+    return u, lbda
+
+
+@jax.jit(static_argnames=("G_block_row_size", "h", "Nit"))
+def projected_gauss_seidel_block_dense(
+    gvel, lbda0, G, G_block_row_size, M_inv, Sigma, h, f_ext, q, lbda_limits, Nit
+):
+    """
+    Solves dense system on the form
+    | M  -G_k^T   | | u_k+1 | = | M @ v_k + h*f_ext |
+    | G_k  Sigma  | | lbda  | = | q |
+
+    This solver supports constraints that constrain the same number of degrees of freedom.
+    It is specified through the G_data python dict, entry with key "constraint_block_row_size".
+
+    INPUTS:
+        gvel: n_bodies x 1, jax array, current generalized velocity.
+        lbda0: (nc*block_row_size) x 1, jax array
+        G_data: jax array of size (nc*block_row_size) x n_bodies
+        G_block_row_size: number of rows in G per constraint block, a positive integer.
+        M_inv: n_bodies x n_bodies, jax array
+        Sigma: (nc*block_row_size) x 1, jax array, diagonal entries of Sigma matrix
+        h: timestep size
+        f_ext: n_bodies x 1, external force applied to rigid bodies.
+        q: (nc*block_row_size) x 1, jax array, right hand side data.
+        lbda_limits: (nc*block_row_size) x 2, jax array, multiplier limits. Each row has multiplier limits, (lbda_min, lbda_max).
+        Nit: number of iterations
+    """
+
+    nc = G.shape[0] // G_block_row_size  # Number of constraints
+
+    # To precompute M^-1 @ G^T
+    M_inv_GT = M_inv @ G.T
+
+    # To precompute necessary elements of schur complement matrix S = G @ M_inv @ G.T + Sigma.
+    def schur_body(c, schur):
+        row_start = c * G_block_row_size
+
+        Gi = jax.lax.dynamic_slice(G, (row_start, 0), (G_block_row_size, G.shape[1]))
+        Sigma_block = jax.lax.dynamic_slice(Sigma, (row_start,), (G_block_row_size,))
+
+        # To compute and update with the Schur block Sii, corrsponding to constraint 'c'.
+        S_block = Gi @ M_inv @ Gi.T + jnp.diag(Sigma_block)
+        schur = jax.lax.dynamic_update_slice(schur, S_block, (row_start, 0))
+        return schur
+
+    schur_blocks = jnp.zeros([nc * G_block_row_size, G_block_row_size])
+    schur_blocks = jax.lax.fori_loop(0, nc, schur_body, schur_blocks)
+
+    def constraint_body(c, state):
+        """
+        This is the inner loop body, handling the update of 'lbda' and 'u' for each constraint
+        """
+        u, lbda = state
+
+        # To find the start index for constraint block.
+        row_start = c * G_block_row_size
+
+        qi = jax.lax.dynamic_slice(q, (row_start,), (G_block_row_size,))
+        Gi = jax.lax.dynamic_slice(G, (row_start, 0), (G_block_row_size, G.shape[1]))
+        Gi_u = jnp.dot(Gi, u)
+        sigma_ii = jax.lax.dynamic_slice(Sigma, (row_start,), (G_block_row_size,))
+        lbda_i = jax.lax.dynamic_slice(lbda, (row_start,), (G_block_row_size,))
+        Sigma_lbda_i = sigma_ii * lbda_i
+
+        ri = qi - Gi_u - Sigma_lbda_i
+        Sii = jax.lax.dynamic_slice(
+            schur_blocks, (row_start, 0), (G_block_row_size, G_block_row_size)
+        )
+        delta_lbda_i = jnp.linalg.solve(Sii, ri)
+
+        # Projection step
+        lbda_lower_limit = jax.lax.dynamic_slice(
+            lbda_limits, (row_start, 0), (G_block_row_size, 1)
+        ).flatten()
+        lbda_upper_limit = jax.lax.dynamic_slice(
+            lbda_limits, (row_start, 1), (G_block_row_size, 1)
+        ).flatten()
+        lbda = jax.lax.dynamic_update_slice(
+            lbda,
+            jnp.clip(lbda_i + delta_lbda_i, lbda_lower_limit, lbda_upper_limit),
+            (row_start,),
+        )
+
+        # Update step with correct delta lambda
+        delta_lbda_update = (
+            jax.lax.dynamic_slice(lbda, (row_start,), (G_block_row_size,)) - lbda_i
+        )
+        u = (
+            u
+            + jax.lax.dynamic_slice(
+                M_inv_GT, (0, row_start), (M_inv_GT.shape[0], G_block_row_size)
+            )
+            @ delta_lbda_update
+        )
 
         return (u, lbda)
 

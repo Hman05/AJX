@@ -34,7 +34,6 @@ class VBRMatrix(BlockMatrixBase):
         row_ptr: Tuple[int],
         row_sizes: Tuple[int],
         col_sizes: Tuple[int],
-        temp=None,
     ):
         self.data = data
         self.col_indices = col_indices

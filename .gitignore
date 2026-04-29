@@ -7,3 +7,5 @@
 *.png
 *.gif
 *.txt
+.env
+Envs
