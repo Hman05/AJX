@@ -460,6 +460,13 @@ class Simulation:
             param.rigid_body_param.names,
             param.scalar_body_param.names,
         )
+        assert set([c.name for c in self.rigid_body_list]).issubset(
+            set(param.rigid_body_param.names)
+        )
+        assert set([c.name for c in self.constraint_list]).issubset(
+            set(param.constraint_param.names)
+        )
+
         G_rsi_list = list(G_rsi.values())
         G_row_indices = np.cumsum(G_row_sizes) - G_row_sizes
         G_data = jnp.zeros(G_size)
