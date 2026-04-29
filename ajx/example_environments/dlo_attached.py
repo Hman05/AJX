@@ -254,10 +254,10 @@ class DLOAttached(Environment):
         #         jnp.array([0.0, 0.0, 1.0]), -0.5 * jnp.pi
         #     )
 
-        if not self.env_settings.hinge_motor_attachment:
+        if self.env_settings.hinge_motor_attachment:
             self.attachment_constraint = OneBodyConstraint(
                 name=f"attachment_hinge",
-                body="body1",
+                body="body0",
                 constraint_type=ConstraintType.HINGE.value,
             )
             attachment_constraint_param = ConstraintParameters.create(
@@ -272,7 +272,7 @@ class DLOAttached(Environment):
         else:
             self.attachment_constraint = OneBodyConstraint(
                 name=f"attachment_lock",
-                body="body1",
+                body="body0",
                 constraint_type=ConstraintType.SE3.value,
             )
             attachment_constraint_param = ConstraintParameters.create_locked(
@@ -285,7 +285,7 @@ class DLOAttached(Environment):
             )
             
 
-        # To make DLO lock joint constraints for all bodies
+        # To make DLO lock joint constraints between all bodies
         bl = self.env_settings.body_length
         for i in range(0, self.env_settings.n_bodies - 1):
             self.lock_joints.append(
@@ -390,6 +390,21 @@ class DLOAttached(Environment):
             DLOSparseParam(coupled_constraint_param),
         )
 
+        self.geometry_list = tuple([*boxes])
+
+        self.extra_geometry = [
+            geometry.Square(
+                "ground",
+                400.0,
+                400.0,
+                translation=(bl * self.env_settings.n_bodies, 0.0, -100.0),
+                rotation=math.quat_from_axis_angle(
+                    jnp.array([1.0, 0.0, 0.0]), jnp.pi / 2
+                ),
+                color=(0.3, 0.3, 0.4),
+            ),
+        ]
+
     def observation_to_configuration(self, observation, param):
         world_transform = Transform(
             jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
@@ -418,3 +433,77 @@ class DLOAttached(Environment):
         multipliers = jnp.zeros([multipliers_size])
 
         return DLOState(initial_conf, initial_gvel, targets, multipliers=multipliers)
+    
+    def control_help_strings(self):
+        return [
+            "h/l: left/right",
+            "j/k: up/down",
+            "u/i: in/out",
+            "m/,: twist clockwise/counterclockwise",
+            "y/n: tilt up/down",
+            "6/7: tilt left/right",
+            "8: hold to shift control target",
+        ]
+
+    def control_func(self, observation, last_observation, key_map, control_state):
+        motor1 = 0.0
+        motor2 = 0.0
+        motor3 = 0.0
+        motor4 = 0.0
+        motor5 = 0.0
+        motor6 = 0.0
+        if (key_map["l"] and key_map["h"]) or (
+            key_map["arrow_left"] and key_map["arrow_right"]
+        ):
+            motor1 = 0.0
+        elif key_map["h"] or key_map["arrow_left"]:
+            motor1 = 3.0  # -0.5
+        elif key_map["l"] or key_map["arrow_right"]:
+            motor1 = -3.0  # 0.5
+
+        if (key_map["j"] and key_map["k"]) or (
+            key_map["arrow_down"] and key_map["arrow_up"]
+        ):
+            motor3 = 0.0
+        elif key_map["j"] or key_map["arrow_down"]:
+            motor3 = -3.0
+        elif key_map["k"] or key_map["arrow_up"]:
+            motor3 = 3.0
+
+        if key_map["u"] and key_map["i"]:
+            motor2 = 0.0
+        elif key_map["u"]:
+            motor2 = -3.0
+        elif key_map["i"]:
+            motor2 = 3.0
+
+        elif key_map["m"]:
+            motor4 = -3.0
+        elif key_map[","]:
+            motor4 = 3.0
+
+        elif key_map["y"]:
+            motor5 = -3.0
+        elif key_map["n"]:
+            motor5 = 3.0
+
+        elif key_map["6"]:
+            motor6 = -3.0
+        elif key_map["7"]:
+            motor6 = 3.0
+        motor1_to_6 = jnp.array([motor1, motor2, motor3, motor4, motor5, motor6])
+        motor7_to_12 = jnp.zeros([6])
+
+        control_first = control_state[0]
+        switch_is_down = control_state[1]
+        if key_map["8"] and not switch_is_down:
+            switch_is_down = True
+            control_first = not control_first
+        if not key_map["8"] and switch_is_down:
+            switch_is_down = False
+        if control_first:
+            motor_1_to_12 = jnp.concatenate([motor1_to_6, motor7_to_12])
+        else:
+            motor_1_to_12 = jnp.concatenate([motor7_to_12, motor1_to_6])
+        control_state = (control_first, switch_is_down)
+        return motor_1_to_12, control_state
