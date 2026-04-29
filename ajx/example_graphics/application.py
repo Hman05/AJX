@@ -25,7 +25,11 @@ from PIL import Image
 
 class Application(ShowBase):
     def __init__(
-        self, scene, framerate: int = 60, camera_controller: str = "fps", headless=False
+        self,
+        scene,
+        framerate: int = 60,
+        camera_controller: str = "default",
+        headless=False,
     ):
         ShowBase.__init__(self)
         self.scene = scene
@@ -48,6 +52,7 @@ class Application(ShowBase):
 
         self.updateTask = self.taskMgr.add(self.update, "update")
         self.resetTask = self.accept("r", self.reset)
+        self.resetTask = self.accept("c", self.reset_camera)
 
         clock = ClockObject.getGlobalClock()
         clock.setMode(ClockObject.MLimited)
@@ -59,8 +64,8 @@ class Application(ShowBase):
         self.disableMouse()
         if self.camera_controller == "fps":
             # Camera state
-            self.cam_speed = 10.0
-            self.mouse_sensitivity = 0.15
+            self.cam_speed = 1.0
+            self.mouse_sensitivity = 0.05
             self.pitch = 0.0
             self.yaw = 0.0
 
