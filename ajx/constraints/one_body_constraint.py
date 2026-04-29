@@ -103,6 +103,17 @@ class OneBodyConstraint(Constraint):
 
         return linear_offset + roational_offset
 
+    def object_func(
+        self,
+        state: State,
+        param: SimulationParameters,
+    ):
+        body_id = param.rigid_body_param.names.index(self.body)
+        constraint_id = param.constraint_param.names.index(self.name)
+        return OneBodyConstraint.func(
+            param, state, (body_id,), (constraint_id,), self.constraint_type
+        )
+
     @jit
     def func(
         param: SimulationParameters,
