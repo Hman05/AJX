@@ -334,7 +334,7 @@ class EnvironmentScene:
         info_list = [
             "o: Cycle displayed information",
             "r: Restart scene",
-            "c: Restart camera",
+            "c: Reset camera",
             "p: Toggle physics",
         ]
         if self.displayed_information == 1:

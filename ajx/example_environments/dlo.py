@@ -42,7 +42,7 @@ class DLOSettings:
         pose_estimate_bodies.append("grip_tool1")
         pose_estimate_offsets.append(gripper1_offset)
         pose_estimate_constraints_a.append("lock_gripper1_to_dlo")
-        pose_estimate_constraints_b.append("lock_hidden2a_to_gripper1")
+        # pose_estimate_constraints_b.append("lock_hidden2a_to_gripper1")
 
         unit_transform = Transform(
             jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
@@ -63,7 +63,7 @@ class DLOSettings:
 
         pose_estimate_bodies.append("grip_tool2")
         pose_estimate_offsets.append(gripper2_offset)
-        pose_estimate_constraints_a.append("lock_gripper2_to_hidden2b")
+        # pose_estimate_constraints_a.append("lock_gripper2_to_hidden2b")
         pose_estimate_constraints_b.append("lock_dlo_to_gripper2")
         return DLOSettings(
             n_segments,
@@ -139,7 +139,7 @@ class CoupleAsCable(PreStepModifier):
         stretch_stiffness = E * area / self.segment_length
         bend_stiffness = E * area_moment / self.segment_length
         twist_stiffness = G * polar_moment / self.segment_length
-        shear_stiffness = G * area / self.segment_length
+        shear_stiffness = 1e6  # G * area / self.segment_length
 
         stiffness = jnp.array(
             [
@@ -211,6 +211,21 @@ class LockAtZeroSpeedMotor(PreStepModifier):
 
 
 class DLO(Environment):
+    """
+    Deformable Linear Object (DLO) environment controlled by two grippers.
+
+    This environment models a deformable linear object (e.g., an elastic beam, rod, or cable)
+    using a rigid-body segment approximation. The DLO is discretized into multiple segments,
+    enabling approximate simulation of continuous deformation dynamics.
+
+    The environment provides pose encoders that return the translation and rotation of each
+    segment along the DLO. These observations can be used for calibration of real-world DLOs instrumented with corresponding markers.
+
+    The environment is controlled by a 12-dimensional action vector representing two grippers.
+    Each gripper contributes a 6-DOF command consisting of 3D position (x, y, z) and
+    3D orientation (yaw, pitch, roll).
+    """
+
     def __init__(
         self,
         sim_settings: SimulationSettings,
@@ -412,13 +427,17 @@ class DLO(Environment):
             frame_b_transform = Transform(
                 jnp.array([offset_b, 0.0, 0.0]), math.Rotations.unitary
             )
+            segment_geometry = [("segment_model", Transform.unitary())]
             debug_geometry = [
                 ("axes_model", frame_a_transform),
                 ("axes_model", frame_b_transform),
                 ("segment_wireframe_model", Transform.unitary()),
             ]
             if f"body{i}" in self.env_settings.pose_estimate_bodies:
-                intensity = i / self.env_settings.n_segments
+                segment_geometry = [
+                    ("segment_model", Transform.unitary()),
+                    ("marker_model", Transform.unitary()),
+                ]
                 debug_geometry = [
                     ("axes_model", frame_a_transform),
                     ("axes_model", frame_b_transform),
@@ -447,11 +466,7 @@ class DLO(Environment):
             )
             inertia = jnp.array([inertia_cyl_x, inertia_cyl_yz, inertia_cyl_yz])
 
-            arms.append(
-                RigidBody(
-                    f"body{i}", [("segment_model", Transform.unitary())], debug_geometry
-                )
-            )
+            arms.append(RigidBody(f"body{i}", segment_geometry, debug_geometry))
             arms_param.append(
                 RigidBodyParameters.create(
                     mass=mass,
@@ -579,8 +594,8 @@ class DLO(Environment):
         # Locks [gripper2 -> hidden_link2b -> hidden_link1b -> world]
         self.lock_gripper2_to_hidden_link2b = TwoBodyConstraint(
             name=f"lock_gripper2_to_hidden2b",
-            body_a=f"hidden_link2b",
-            body_b=f"grip_tool2",
+            body_a=f"grip_tool2",
+            body_b=f"hidden_link2b",
             constraint_type=ConstraintType.HINGE.value,
         )
         lock_gripper2_to_hidden_link2b_param = ConstraintParameters.create_locked(
@@ -769,7 +784,7 @@ class DLO(Environment):
             ("ground", Transform.unitary()),
         ]
 
-    def observation_to_configuration(self, observation, param):
+    def create_neutral_configuration(self, observation, param):
         # TODO: Function name is misleading
         bl = self.env_settings.segment_halflength
         world_transform = Transform(
@@ -817,7 +832,7 @@ class DLO(Environment):
         )
 
     def get_neutral_state(self, param):
-        initial_conf = self.observation_to_configuration(None, param)
+        initial_conf = self.create_neutral_configuration(None, param)
         n_segments = self.env_settings.n_segments
         n_bodies = n_segments + 6
         initial_gvel = GeneralizedVelocity(jnp.zeros([n_bodies, 6]))
@@ -841,16 +856,32 @@ class DLO(Environment):
         targets = targets.at[0:3].set(gripper1_pos)
         return DLOState(initial_conf, initial_gvel, targets)
 
-    def convert_tracking_transforms_to_body_transforms(
-        self, tracking_transforms: Transform
+    def convert_marker_transforms_to_body_transforms(
+        self, marker_transforms: Transform
     ):
-        """ """
+        """
+        Convert marker transforms (world → marker) into body transforms (world → body)
+        using known marker offsets (body → marker).
+
+        Parameters
+        ----------
+        marker_transforms : Transform
+            Batched marker transforms in the world frame. The `pos` and `rot` fields
+            must have shapes (n, 3) and (n, 4), respectively, where `n` is the number
+            of markers.
+
+        Returns
+        -------
+        Transform
+            Batched body transforms in the world frame (world → body), with the same
+            batch size `n` as the input.
+        """
         offset_transforms = Transform(
             pos=jnp.stack([po.pos for po in self.env_settings.pose_estimate_offsets]),
             rot=jnp.stack([po.rot for po in self.env_settings.pose_estimate_offsets]),
         )
         marker_to_body = vmap(Transform.inverse)(offset_transforms)
-        body_transforms = vmap(Transform.multiply)(tracking_transforms, marker_to_body)
+        body_transforms = vmap(Transform.multiply)(marker_transforms, marker_to_body)
         return body_transforms
 
     def get_state_by_body_interpolation(
@@ -906,83 +937,90 @@ class DLO(Environment):
             interp_names.index(name) for name in self.env_settings.pose_estimate_bodies
         ]
 
+        # Exclude the last frame (not part of interpolation)
         frame_offsets_a = param.constraint_param.frame_a.as_vectorized_transform()[
             offset_a : offset_a + n_interp_bodies
-        ]
+        ][:-1]
 
         # Last frame is not included in offsets b (DLO + first lock)
         frame_offsets_b = param.constraint_param.frame_b.as_vectorized_transform()[
             offset_b : offset_b + n_interp_bodies
-        ]
+        ][1:]
 
         pos = state0.conf.pos[inertp_offset : inertp_offset + n_interp_bodies]
         rot = state0.conf.rot[inertp_offset : inertp_offset + n_interp_bodies]
 
+        # T[world->body] @ T[body->frame]
         constraint_transforms_a = vmap(Transform.multiply)(
-            Transform(pos, rot), frame_offsets_a
+            Transform(pos, rot)[:-1], frame_offsets_a
         )
         constraint_transforms_b = vmap(Transform.multiply)(
-            Transform(pos, rot), frame_offsets_b
+            Transform(pos, rot)[1:], frame_offsets_b
         )
+        # One can verify that constraint_transforms_b is (approx) the same as constraint_transforms_a
+        reference_offset = constraint_transforms_a.pos[:, 0]
 
-        off00a = constraint_transforms_a.pos[:, 0]
-        off00b = constraint_transforms_b.pos[:, 0]
-        # The first and final indices corresponds to the grippers
-        last_dlo_w_marker_id = indices_body[-2]
-        first_dlo_w_marker_id = indices_body[1]
-        off0a = constraint_transforms_a.pos[: last_dlo_w_marker_id + 1, 0]
-        off0b = constraint_transforms_b.pos[first_dlo_w_marker_id:, 0]
+        # The first and final indices corresponds to the grippers, they only have one relevant frame
+        last_segment_w_marker_id = indices_body[-2]
+        first_segment_w_marker_id = indices_body[1]
+        last_interface_w_marker_id = last_segment_w_marker_id + 1
+        first_interface_w_marker_id = first_segment_w_marker_id - 1
 
-        off0a_p = off00a[jnp.array(indices_body[:-1])]
-        off0b_p = off00b[jnp.array(indices_body[1:])]
+        # The points at which to reconstruct "frame a"s
+        off0a = reference_offset[:last_interface_w_marker_id]
+        off0b = reference_offset[first_interface_w_marker_id:]
+
+        # The points at which the transforms are known
+        off0a_p = reference_offset[jnp.array(indices_body[:-1])]
+        off0b_p = reference_offset[jnp.array(indices_body[1:]) - 1]
 
         # Begin with just xyz-interpolation
         from scipy.interpolate import CubicSpline, interp1d
 
         # Frame A
         cs = interp1d(
-            off0a_p, transforms[0].pos[:-1], kind="linear", axis=0
+            off0a_p, transforms[0].pos, kind="linear", axis=0
         )  # axis=0 if fp is (N, ...)
-        cs = CubicSpline(off0a_p, transforms[0].pos[:-1])
+        # cs = CubicSpline(off0a_p, transforms[0].pos[:-1])
         new_pos_a = cs(off0a)
-        new_rot_a = math.quat_interp(off0a, off0a_p, transforms[0].rot[:-1])
+        new_rot_a = math.quat_interp(off0a, off0a_p, transforms[0].rot)
         new_transforms_a = Transform(new_pos_a, new_rot_a)
 
         # T[world->frame] = T[world->body] @ T[body->frame]
         # which implies
         # T[world->body] = T[world->frame] @T[frame->body]
         body_locations_a = vmap(Transform.get_relative)(
-            new_transforms_a, frame_offsets_a[: last_dlo_w_marker_id + 1]
+            new_transforms_a, frame_offsets_a[:last_interface_w_marker_id]
         )
         # Frame B
         cs = interp1d(
-            off0b_p, transforms[1].pos[1:], kind="linear", axis=0
+            off0b_p, transforms[1].pos, kind="linear", axis=0
         )  # axis=0 if fp is (N, ...)
-        cs = CubicSpline(off0b_p, transforms[1].pos[1:])
+        # cs = CubicSpline(off0b_p, transforms[1].pos[1:])
         new_pos_b = cs(off0b)
-        new_rot_b = math.quat_interp(off0b, off0b_p, transforms[1].rot[1:])
+        new_rot_b = math.quat_interp(off0b, off0b_p, transforms[1].rot)
         new_transforms_b = Transform(new_pos_b, new_rot_b)
 
         # T[w->f] = T[w->b] @ T[b->f]
         # T[w->b] = T[w->f] @ inv(T[b->f])
         body_locations_b = vmap(Transform.get_relative)(
-            new_transforms_b, frame_offsets_b[first_dlo_w_marker_id:]
+            new_transforms_b, frame_offsets_b[first_interface_w_marker_id:]
         )
-        a_only_pos = body_locations_a.pos[:first_dlo_w_marker_id]
-        a_only_rot = body_locations_a.rot[:first_dlo_w_marker_id]
-        a_shared_pos = body_locations_a.pos[first_dlo_w_marker_id:]
-        a_shared_rot = body_locations_a.rot[first_dlo_w_marker_id:]
+        a_only_pos = body_locations_a.pos[:first_segment_w_marker_id]
+        a_only_rot = body_locations_a.rot[:first_segment_w_marker_id]
+        a_shared_pos = body_locations_a.pos[first_segment_w_marker_id:]
+        a_shared_rot = body_locations_a.rot[first_segment_w_marker_id:]
         b_only_pos = body_locations_b.pos[
-            last_dlo_w_marker_id - first_dlo_w_marker_id + 1 :
+            last_segment_w_marker_id - first_segment_w_marker_id + 1 :
         ]
         b_only_rot = body_locations_b.rot[
-            last_dlo_w_marker_id - first_dlo_w_marker_id + 1 :
+            last_segment_w_marker_id - first_segment_w_marker_id + 1 :
         ]
         b_shared_pos = body_locations_b.pos[
-            : last_dlo_w_marker_id - first_dlo_w_marker_id + 1
+            : last_segment_w_marker_id - first_segment_w_marker_id + 1
         ]
         b_shared_rot = body_locations_b.rot[
-            : last_dlo_w_marker_id - first_dlo_w_marker_id + 1
+            : last_segment_w_marker_id - first_segment_w_marker_id + 1
         ]
 
         shared_pos = (a_shared_pos + b_shared_pos) / 2
@@ -999,7 +1037,6 @@ class DLO(Environment):
     def _place_hidden_links(self, interp_pos, interp_rot, param, state):
         # The configuration of the interpolated segment (DLO are grippers) is now known
         # The final step is to place the robot arms (hidden links)
-        # For now, just place them
         gripper1_transform = Transform(interp_pos[0], interp_rot[0])
         gripper2_transform = Transform(interp_pos[-1], interp_rot[-1])
 
@@ -1024,6 +1061,7 @@ class DLO(Environment):
         hidden1a_transform = self.lock_hidden1a_to_hidden2a.place_other(
             5, param, hidden2a_transform, lock_euler1[1]
         )
+
         hidden2b_transform = self.lock_gripper2_to_hidden_link2b.place_other(
             5, param, gripper2_transform, -lock_euler2[2]
         )
@@ -1077,6 +1115,7 @@ class DLO(Environment):
             param.constraint_param.names.index(name)
             for name in self.env_settings.pose_estimate_constraints_b
         ]
+
         frame_offsets_a = param.constraint_param.frame_a.as_vectorized_transform()[
             jnp.array(indices_a)
         ]
@@ -1085,10 +1124,10 @@ class DLO(Environment):
         ]
 
         constraint_transforms_a = vmap(Transform.multiply)(
-            body_transforms, frame_offsets_a
+            body_transforms[:-1], frame_offsets_a
         )
         constraint_transforms_b = vmap(Transform.multiply)(
-            body_transforms, frame_offsets_b
+            body_transforms[1:], frame_offsets_b
         )
 
         return constraint_transforms_a, constraint_transforms_b
@@ -1157,20 +1196,20 @@ class DLO(Environment):
             motor2 = 0.3
 
         elif key_map["m"]:
-            motor4 = -1.0
-        elif key_map[","]:
             motor4 = 1.0
+        elif key_map[","]:
+            motor4 = -1.0
 
         elif key_map["y"]:
-            motor5 = -1.0
-        elif key_map["n"]:
             motor5 = 1.0
+        elif key_map["n"]:
+            motor5 = -1.0
 
         elif key_map["6"]:
-            motor6 = -1.0
-        elif key_map["7"]:
             motor6 = 1.0
-        motor1_to_6 = -jnp.array([motor1, motor2, motor3, motor4, motor5, motor6])
+        elif key_map["7"]:
+            motor6 = -1.0
+        motor1_to_6 = jnp.array([-motor1, -motor2, -motor3, motor4, motor5, motor6])
         motor7_to_12 = jnp.zeros([6])
 
         control_first = control_state[0]
