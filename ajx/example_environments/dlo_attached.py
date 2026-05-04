@@ -13,8 +13,10 @@ import numpy as np
 class DLOAttachedSettings:
     n_bodies: int
     body_length: float
+    mass_density: float
     constraint_type: ConstraintType
     hinge_motor_attachment: bool
+    body_side_length: Optional[float] = 0.1
 
 
 @struct.dataclass
@@ -185,7 +187,7 @@ class DLOAttached(Environment):
         gradient = gradient_start - jnp.outer(
             jnp.arange(n), (gradient_start - gradient_end) / n
         )
-        density = 10.0
+        density = self.env_settings.mass_density
         """
         grapple_box_length = 0.1
         grapple1_box = geometry.Box(
@@ -222,13 +224,13 @@ class DLOAttached(Environment):
             box = geometry.Box(
                 f"box{i}",
                 self.env_settings.body_length,
-                0.1,
-                0.1,
+                self.env_settings.body_side_length,
+                self.env_settings.body_side_length,
                 translation=(0.0, 0.0, 0.0),
                 color=tuple([*gradient[i]]),
             )
             boxes.append(box)
-            mass = density * 0.1 * 0.1 * self.env_settings.body_length
+            mass = density * self.env_settings.body_side_length * self.env_settings.body_side_length * self.env_settings.body_length
             inertia = box.get_diag_inertia(density)
 
             arms.append(RigidBody(f"body{i}", (f"box{i}",)))
@@ -298,8 +300,10 @@ class DLOAttached(Environment):
             )
             lock_joint_param.append(
                 ConstraintParameters.create_locked(
-                    frame_a=Frame(jnp.array([bl, 0.0, 0.0]), rotation1),
-                    frame_b=Frame(jnp.array([-bl, 0.0, 0.0]), rotation2),
+                    #frame_a=Frame(jnp.array([bl, 0.0, 0.0]), rotation1),
+                    #frame_b=Frame(jnp.array([-bl, 0.0, 0.0]), rotation2),
+                    frame_a=Frame(jnp.array([0.0, 0.0, -0.5*bl]), rotation1),
+                    frame_b=Frame(jnp.array([0.0, 0.0, 0.5*bl]), rotation2),
                     compliance=1e-5,
                     damping=2 * self.reference_timestep,
                     offset=0.0,
@@ -434,6 +438,22 @@ class DLOAttached(Environment):
 
         return DLOState(initial_conf, initial_gvel, targets, multipliers=multipliers)
     
+    def get_stiffness_from_material_parameters(self, youngs_modulus, shear_modulus):
+        
+        l = self.env_settings.body_length
+        s = self.env_settings.body_side_length
+
+        area = s**2    # Cross-sectional area
+        area_moment = s**4 / 12   # Second moment of area
+        polar_moment = s**4 / 6    # Second polar moment of area, assumes square cross section
+
+        # Stiffness values per segment
+        axial_stiffness = youngs_modulus * area / l
+        bending_stiffness = youngs_modulus * area_moment / l
+        torsional_stiffness = shear_modulus * polar_moment / l
+
+        return axial_stiffness, bending_stiffness, torsional_stiffness
+
     def control_help_strings(self):
         return [
             "h/l: left/right",
