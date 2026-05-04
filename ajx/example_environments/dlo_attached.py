@@ -300,10 +300,8 @@ class DLOAttached(Environment):
             )
             lock_joint_param.append(
                 ConstraintParameters.create_locked(
-                    #frame_a=Frame(jnp.array([bl, 0.0, 0.0]), rotation1),
-                    #frame_b=Frame(jnp.array([-bl, 0.0, 0.0]), rotation2),
-                    frame_a=Frame(jnp.array([0.0, 0.0, -0.5*bl]), rotation1),
-                    frame_b=Frame(jnp.array([0.0, 0.0, 0.5*bl]), rotation2),
+                    frame_a=Frame(jnp.array([0.5*bl, 0.0, 0.0]), rotation1),
+                    frame_b=Frame(jnp.array([-0.5*bl, 0.0, 0.0]), rotation2),
                     compliance=1e-5,
                     damping=2 * self.reference_timestep,
                     offset=0.0,
