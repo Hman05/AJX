@@ -515,6 +515,13 @@ class Simulation:
             param.rigid_body_param.names,
             param.scalar_body_param.names,
         )
+        assert set([c.name for c in self.rigid_body_list]).issubset(
+            set(param.rigid_body_param.names)
+        )
+        assert set([c.name for c in self.constraint_list]).issubset(
+            set(param.constraint_param.names)
+        )
+
         G_rsi_list = list(G_rsi.values())
         G_row_indices = np.cumsum(G_row_sizes) - G_row_sizes
         G_data = jnp.zeros(G_size)
@@ -611,7 +618,7 @@ class Simulation:
             tau = constraint_param.damping[idx_slice]
             epsilon = constraint_param.compliance[idx_slice]
             target = constraint_param.target[idx_slice]
-            viscous_compliance = epsilon
+            viscous_compliance = constraint_param.viscous_compliance[idx_slice]
             alpha = 1 / (1 + 4 * tau * self.h_inv)
             holonomic_regularization = 4 * epsilon * self.h_inv**2 * alpha
             nonholonomic_regularization = viscous_compliance * self.h_inv
@@ -673,7 +680,7 @@ class Simulation:
             # Copy rhs of this constraint group to the full prhs vector
             b_data = b_data.at[row_slice_begin:row_slice_end].set(rhs.flatten())
 
-        G = VBRMatrix(G_data, G_col_indices, G_row_ptr, G_row_sizes, G_col_sizes)
+        G = VBRMatrix.create(G_data, G_col_indices, G_row_ptr, G_row_sizes, G_col_sizes)
 
         return M, M_inv, G, Sigma_data, b_data
 
@@ -750,7 +757,7 @@ class Simulation:
                 slice_begin2 = slice_end2
             sigma_slice_begin = sigma_slice_end
             slice_begin1 = slice_end1
-        S = VBCMatrix(S_data, row_indices, col_ptr, block_sizes, block_sizes)
+        S = VBCMatrix.create(S_data, row_indices, col_ptr, block_sizes, block_sizes)
 
         return S, rsi_dict
 

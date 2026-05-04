@@ -77,9 +77,11 @@ class TwoBodyConstraint(Constraint):
         if self.constraint_type == ConstraintType.HINGE.value:
             return ("nx", "ny", "nz", "n_bend1", "n_bend2", "n_torsion")
         elif self.constraint_type == ConstraintType.PRISMATIC.value:
-            return ("nu", "nw", "n_bend1", "n_torsion", "n_bend2", "nv")
+            return ("nu", "nw", "nv", "n_bend1", "n_torsion", "n_bend2")
         elif self.constraint_type == ConstraintType.SE3.value:
             return ("nu", "nv", "nw", "nru", "nrv", "nrw")
+        elif self.constraint_type == ConstraintType.BEND_TWIST.value:
+            return ("nu", "nv", "nw", "n_bend1", "n_bend2", "n_twist")
         return ()
 
     def compute_offset(
@@ -98,11 +100,10 @@ class TwoBodyConstraint(Constraint):
 
         return linear_offset + roational_offset
 
-    # @partial(jit, static_argnums=0)
-    def funca(
+    def object_func(
         self,
-        param: SimulationParameters,
         state: State,
+        param: SimulationParameters,
     ):
         body_b_id = param.rigid_body_param.names.index(self.body_b)
         body_a_id = param.rigid_body_param.names.index(self.body_a)
@@ -111,7 +112,7 @@ class TwoBodyConstraint(Constraint):
             param, state, (body_a_id, body_b_id), (constraint_id,), self.constraint_type
         )
 
-    # @jit
+    @jit
     def func(
         param: SimulationParameters,
         state: State,
@@ -143,8 +144,19 @@ class TwoBodyConstraint(Constraint):
         spherical = r_a - r_b
         R_a = math.rotation_matrix(q_a).T
         co_spherical = R_a @ spherical  # math.rotate_vector(q_a, spherical)
+        dot1_0 = jnp.dot(u_a, u_b)
         dot1_1 = jnp.dot(u_a, v_b)
         dot1_2 = jnp.dot(u_a, w_b)
+        dot3_2 = jnp.dot(w_a, v_b)
+
+        cross1_0 = jnp.linalg.norm(jnp.cross(u_a, u_b))
+        cross1_1 = jnp.linalg.norm(jnp.cross(u_a, v_b))
+        cross1_2 = jnp.linalg.norm(jnp.cross(u_a, w_b))
+        cross3_2 = jnp.linalg.norm(jnp.cross(w_a, v_b))
+        bend0 = jnp.atan2(cross1_0, dot1_0)
+        bend1 = jnp.atan2(cross1_1, dot1_1) - jnp.pi / 2
+        bend2 = jnp.atan2(cross1_2, dot1_2) - jnp.pi / 2
+        twist = jnp.atan2(cross3_2, dot3_2) - jnp.pi / 2
 
         so3_err = math.quat_residual(q_a, q_b)
 
@@ -175,7 +187,15 @@ class TwoBodyConstraint(Constraint):
         se3_constraint = jnp.block([co_spherical, so3_err]) * (
             constraint_type == ConstraintType.SE3.value
         )
-        return hinge_constraint + prismatic_constraint + se3_constraint
+        bend_twist_constraint = jnp.block([co_spherical, bend1, bend2, twist]) * (
+            constraint_type == ConstraintType.BEND_TWIST.value
+        )
+        return (
+            hinge_constraint
+            + prismatic_constraint
+            + se3_constraint
+            + bend_twist_constraint
+        )
 
     @jit
     def jacobian(
@@ -219,6 +239,23 @@ class TwoBodyConstraint(Constraint):
         u_a_tangent_a = -jnp.block([jnp.zeros([1, 3]), u_a])
         u_a_tangent_b = -jnp.block([jnp.zeros([1, 3]), -u_a])
 
+        def angular_jacobian(a, b):
+            epsilon = 1e-12
+            d_cross = jnp.cross(a, b)
+            d_cross_norm = jnp.linalg.norm(d_cross)
+
+            Ga = -d_cross[None] / (d_cross_norm + epsilon)
+            Gb = d_cross[None] / (d_cross_norm + epsilon)
+            Ga_ext = jnp.concatenate([jnp.zeros([1, 3]), Ga], axis=1)
+            Gb_ext = jnp.concatenate([jnp.zeros([1, 3]), Gb], axis=1)
+            return Ga_ext, Gb_ext
+
+        bend0_jac_a, bend0_jac_b = angular_jacobian(u_a, u_b)
+        filler_jac_a, filler_jac_b = jnp.zeros([1, 6]), jnp.zeros([1, 6])
+        bend1_jac_a, bend1_jac_b = angular_jacobian(u_a, v_b)
+        bend2_jac_a, bend2_jac_b = angular_jacobian(u_a, w_b)
+        twist_jac_a, twist_jac_b = angular_jacobian(w_a, v_b)
+
         def inc_quat_residual(inc_a, inc_b, q_a, q_b):
             q_inc_a = math.from_rotation_vector(inc_a[3:])
             q_inc_b = math.from_rotation_vector(inc_b[3:])
@@ -253,9 +290,20 @@ class TwoBodyConstraint(Constraint):
                 jnp.concatenate([co_spherical_b, so3_err_b]),
             ],
             axis=None,
-        ) * (constraint_type == 2)
+        ) * (constraint_type == ConstraintType.SE3.value)
+        jac_twist_bend = jnp.concatenate(
+            [
+                jnp.concatenate(
+                    [co_spherical_a, bend1_jac_a, bend2_jac_a, twist_jac_a]
+                ),
+                jnp.concatenate(
+                    [co_spherical_b, bend1_jac_b, bend2_jac_b, twist_jac_b]
+                ),
+            ],
+            axis=None,
+        ) * (constraint_type == ConstraintType.BEND_TWIST.value)
 
-        return jac_hinge + jac_prismatic + jac_se3
+        return jac_hinge + jac_prismatic + jac_se3 + jac_twist_bend
 
     # @partial(jit, static_argnums=0)
     def get_free_degrees(

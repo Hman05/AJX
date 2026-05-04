@@ -20,6 +20,7 @@ class Furuta(Environment):
     ):
         self.n_control = 1
         self.timestep = sim_settings.timestep
+        self.env_settings = reference_timestep
 
         self.reference_timestep = reference_timestep
         if not reference_timestep:
@@ -32,7 +33,7 @@ class Furuta(Environment):
 
         self.control_names = ["voltage"]
         self.state_tangent_dim = 2 * 12
-        self.settings = sim_settings
+        self.sim_settings = sim_settings
         self._build_sim(sim_settings)
         self.dynamic_residual_names = self.get_state_residual_names()
         self.initial_control_state = 0
@@ -50,20 +51,20 @@ class Furuta(Environment):
         arm2_model = os.path.join(script_dir, "assets/arm2.bam")
         stand_model = os.path.join(script_dir, "assets/base.bam")
 
-        arm1_box = geometry.Model(
-            "arm1_box", arm1_model, translation=(-com_displacement1, 0.0, 0.0)
+        arm1_model = geometry.Model(
+            "arm1_model", arm1_model, translation=(-com_displacement1, 0.0, 0.0)
         )
-        arm2_box = geometry.Model(
-            "arm2_box", arm2_model, translation=(0.0, com_displacement2, 0.0)
+        arm2_model = geometry.Model(
+            "arm2_model", arm2_model, translation=(0.0, com_displacement2, 0.0)
         )
 
-        arm1 = RigidBody("arm1", ("arm1_box",))
+        arm1 = RigidBody("arm1", [("arm1_model", Transform.unitary())])
         arm1_param = RigidBodyParameters.create(
             mass=0.428,
             inertia_diag=jnp.array([1e-6, 0.012, 0.012]),
             name="arm1",
         )
-        arm2 = RigidBody("arm2", ("arm2_box",))
+        arm2 = RigidBody("arm2", [("arm2_model", Transform.unitary())])
         arm2_param = RigidBodyParameters.create(
             mass=0.238, inertia_diag=jnp.array([0.0016, 1e-6, 0.0016]), name="arm2"
         )
@@ -80,7 +81,7 @@ class Furuta(Environment):
         rotation3 = rotation2
 
         electric_motor_param = GainMotorParameters(0.0004, 7.5)  # 0.00265, 0.0039
-        electric_motor = GainMotor2(
+        electric_motor = GainMotor(
             "electric_motor", self.hinge1, sim_settings.timestep, 0, 5
         )
         # self.electric_motor = TargetSpeedMotor("electric_motor", "hinge1_motor", 0)
@@ -156,29 +157,24 @@ class Furuta(Environment):
             ),
         )
 
-        self.geometry_list = (arm1_box, arm2_box)
-
-        self.axes_frame_a = geometry.Model(
-            "axes_frame_a",
-            "axes.bam",
-            translation=-self.camera_pos,
-            rotation=self.camera_rot,
+        ground = geometry.Square(
+            "ground",
+            1.0,
+            1.0,
+            (0.0, -0.8183 - 0.0304 - 0.0071 - 0.01, 0.0),
+            color=(0.3, 0.3, 0.4),
+        )
+        stand = geometry.Model(
+            "stand",
+            stand_model,
+            translation=(0.0, -0.8183 - 0.0071 - 0.01, -0.06925),
         )
 
+        self.geometry_list = (arm1_model, arm2_model, ground, stand)
+
         self.extra_geometry = [
-            self.axes_frame_a,
-            geometry.Square(
-                "ground",
-                1.0,
-                1.0,
-                (0.0, -0.8183 - 0.0304 - 0.0071 - 0.01, 0.0),
-                color=(0.3, 0.3, 0.4),
-            ),
-            geometry.Model(
-                "stand",
-                stand_model,
-                translation=(0.0, -0.8183 - 0.0071 - 0.01, -0.06925),
-            ),
+            ("ground", Transform.unitary()),
+            ("stand", Transform.unitary()),
         ]
 
     def observation_to_configuration(self, observation, param):

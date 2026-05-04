@@ -105,6 +105,7 @@ class Box:
         else:
             self.color = (0.3, 0.6, 0.3)
         self.node = None
+        self.has_instance = False
 
     def get_diag_inertia(self, density):
         volume = self.half_extent_x * self.half_extent_y * self.half_extent_z * 8
@@ -185,6 +186,11 @@ class Box:
         extents = jnp.nan_to_num(extents, nan=0.001)
         return extents[0], extents[1], extents[2]
 
+    def create_instance(self, instance_name, transform):
+        assert not self.has_instance
+        self.has_instance = True
+        return self.node
+
 
 class Square:
     def __init__(
@@ -212,6 +218,7 @@ class Square:
         else:
             self.color = (0.3, 0.6, 0.3)
         self.node = None
+        self.has_instance = False
 
     def create_node(self, game):
         from panda3d.core import GeomVertexFormat, GeomVertexData
@@ -249,6 +256,11 @@ class Square:
     def update_node(self, pos, rot):
         self.node.setPosQuat(Vec3(*pos), Quat(*rot))
 
+    def create_instance(self, instance_name, transform):
+        assert not self.has_instance
+        self.has_instance = True
+        return self.node
+
 
 def makeCuboid(game, x1, y1, z1, x2, y2, z2, c=[1.0, 1.0, 1.0], name=""):
     from panda3d.core import GeomVertexFormat, GeomVertexData
@@ -281,7 +293,9 @@ def makeCuboid(game, x1, y1, z1, x2, y2, z2, c=[1.0, 1.0, 1.0], name=""):
 
 
 class Model:
-    def __init__(self, name, model_path, translation=None, rotation=None, scale=None):
+    def __init__(
+        self, name, model_path, translation=None, rotation=None, scale=None, color=None
+    ):
         self.name = name
         if translation is not None:
             self.translation = translation
@@ -297,17 +311,31 @@ class Model:
             self.scale = scale
         else:
             self.scale = (1.0, 1.0, 1.0)
+        if color is not None:
+            self.color = color
+        else:
+            self.color = (1.0, 1.0, 1.0)
         self.node = None
         self.model_path = model_path
+        self.model = None
 
     def create_node(self, game):
         self.node = render.attachNewNode("root")
 
         model = loader.loadModel(self.model_path)
-        model.reparentTo(self.node)
         model.setPos(*self.translation)
         model.setHpr(*self.rotation)
         model.setScale(*self.scale)
+        model.setColorScale(self.color[0], self.color[1], self.color[2], 1.0)
+        self.model = model
+
+    def create_instance(self, instance_name, transform):
+        instance_root = self.node.attachNewNode(instance_name)
+        instance_root.setPosQuat(Vec3(*transform.pos), Quat(*transform.rot))
+        offset_node = instance_root.attachNewNode(f"{instance_name}.offset")
+
+        self.model.instanceTo(offset_node)
+        return instance_root
 
     def update_node(self, pos, rot):
         self.node.setPos(*pos)

@@ -71,6 +71,10 @@ class OneBodyConstraint(Constraint):
             return ("nx", "ny", "nz", "n_bend", "n_torsion", "t")
         elif self.constraint_type == ConstraintType.PRISMATIC.value:
             return ("nu", "nw", "n_bend1", "n_torsion", "n_bend2", "t")
+        elif self.constraint_type == ConstraintType.SE3.value:
+            return ("nu", "nv", "nw", "nru", "nrv", "nrw")
+        elif self.constraint_type == ConstraintType.BEND_TWIST.value:
+            return ("nu", "nv", "nw", "n_bend1", "n_bend2", "n_twist")
         return ()
 
     def compute_offset(
@@ -99,8 +103,7 @@ class OneBodyConstraint(Constraint):
 
         return linear_offset + roational_offset
 
-    @partial(jit, static_argnums=0)
-    def func2(
+    def object_func(
         self,
         state: State,
         param: SimulationParameters,
@@ -144,9 +147,14 @@ class OneBodyConstraint(Constraint):
         co_spherical = math.rotate_vector(q_a, spherical)
         dot1_1 = jnp.dot(u_a, v_b)
         dot1_2 = jnp.dot(u_a, w_b)
-        dot1_3 = jnp.dot(w_a, v_b)
-        dot2_1 = jnp.dot(u_a, r_a - r_b)
-        dot2_2 = jnp.dot(w_a, r_a - r_b)
+        dot3_2 = jnp.dot(w_a, v_b)
+
+        cross1_1 = jnp.linalg.norm(jnp.cross(u_a, v_b))
+        cross1_2 = jnp.linalg.norm(jnp.cross(u_a, w_b))
+        cross3_2 = jnp.linalg.norm(jnp.cross(w_a, v_b))
+        bend1 = jnp.atan2(cross1_1, dot1_1) - jnp.pi / 2
+        bend2 = jnp.atan2(cross1_2, dot1_2) - jnp.pi / 2
+        twist = jnp.atan2(cross3_2, dot3_2) - jnp.pi / 2
 
         so3_err = math.quat_residual(q_a, q_b)
 
@@ -181,7 +189,15 @@ class OneBodyConstraint(Constraint):
         se3_constraint = jnp.block([co_spherical, so3_err]) * (
             constraint_type == ConstraintType.SE3.value
         )
-        return hinge_constraint + prismatic_constraint + se3_constraint
+        bend_twist_constraint = jnp.block([co_spherical, bend1, bend2, twist]) * (
+            constraint_type == ConstraintType.BEND_TWIST.value
+        )
+        return (
+            hinge_constraint
+            + prismatic_constraint
+            + se3_constraint
+            + bend_twist_constraint
+        )
 
     @partial(jit, static_argnums=0)
     def jacobian(
@@ -225,6 +241,19 @@ class OneBodyConstraint(Constraint):
         co_spherical_b = jnp.block([-R_a, R_a @ math.skew(d_b)])
         u_a_tangent_b = jnp.block([jnp.zeros([1, 3]), -u_a])
 
+        def angular_jacobian(a, b):
+            epsilon = 1e-12
+            d_cross = jnp.cross(a, b)
+            d_cross_norm = jnp.linalg.norm(d_cross)
+
+            Gb = d_cross[None] / (d_cross_norm + epsilon)
+            Gb_ext = jnp.concatenate([jnp.zeros([1, 3]), Gb], axis=1)
+            return Gb_ext
+
+        bend1_jac_b = angular_jacobian(u_a, v_b)
+        bend2_jac_b = angular_jacobian(u_a, w_b)
+        twist_jac_b = angular_jacobian(w_a, v_b)
+
         def inc_quat_residual(inc_a, inc_b, q_a, q_b):
             q_inc_a = math.from_rotation_vector(inc_a[3:])
             q_inc_b = math.from_rotation_vector(inc_b[3:])
@@ -245,8 +274,11 @@ class OneBodyConstraint(Constraint):
         jac_se3 = jnp.concatenate([co_spherical_b, so3_err_b], axis=None) * (
             constraint_type == 2
         )
+        jac_twist_bend = jnp.concatenate(
+            [co_spherical_b, bend1_jac_b, bend2_jac_b, twist_jac_b], axis=None
+        ) * (constraint_type == ConstraintType.BEND_TWIST.value)
 
-        return jac_hinge + jac_prismatic + jac_se3
+        return jac_hinge + jac_prismatic + jac_se3 + jac_twist_bend
 
     @partial(jit, static_argnums=0)
     def get_free_degrees(
@@ -330,12 +362,34 @@ class OneBodyConstraint(Constraint):
         ) + prismatic_body_b_rotation * (
             self.constraint_type == ConstraintType.PRISMATIC.value
             or self.constraint_type == ConstraintType.SE3.value
+            or self.constraint_type == ConstraintType.BEND_TWIST.value
         )
         body_b_position = hinge_body_b_position * (
             self.constraint_type == ConstraintType.HINGE.value
         ) + prismatic_body_b_position * (
             self.constraint_type == ConstraintType.PRISMATIC.value
             or self.constraint_type == ConstraintType.SE3.value
+            or self.constraint_type == ConstraintType.BEND_TWIST.value
         )
 
         return Transform(body_b_position, body_b_rotation)
+
+    def place_frame_a(self, state: State, param: SimulationParameters):
+        body_id = param.rigid_body_param.names.index(self.body)
+        constraint_id = param.constraint_param.names.index(self.name)
+
+        world_body_pos = state.conf.pos[body_id]
+        world_body_rot = state.conf.rot[body_id]
+
+        body_frame_b_pos = param.constraint_param.frame_b.position[constraint_id]
+        body_frame_b_rot = param.constraint_param.frame_b.rotation[constraint_id]
+
+        world_frame_b_rot = math.quat_mul(body_frame_b_rot, world_body_rot)
+        world_frame_b_pos = world_body_pos + math.rotate_vector(
+            world_frame_b_rot, body_frame_b_pos
+        )
+
+        world_frame_a_rot = world_frame_b_rot
+        world_frame_a_pos = world_frame_b_pos
+
+        return Transform(world_frame_a_pos, world_frame_a_rot)

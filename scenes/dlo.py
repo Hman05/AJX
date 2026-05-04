@@ -6,68 +6,55 @@ jax.config.update("jax_enable_x64", True)
 from ajx.example_graphics.environment_scene import EnvironmentScene
 from ajx.example_graphics.application import Application
 from ajx.constraints import ConstraintType
-from ajx.example_environments.dlo import DLO, DLOSettings
+from ajx.example_environments.dlo import DLO, DLOSettings, CableParameters
+from ajx.example_environments.locked_dlo import LockedDLO
 from ajx.simulation import SimulationSettings, Solver
 import jax.numpy as jnp
+import ajx.math as math
+from ajx import Transform
 
 if __name__ == "__main__":
     timestep = 0.016667
+    grippermc_to_marker = jnp.array([0.0478024, 0, 0])
 
+    marker_offsets = [0.10, 0.20, 0.30, 0.40, 0.50]
+    n_marker_segments = len(marker_offsets)
+    n_segments_between_markers = 6
+    n_segments = (
+        n_segments_between_markers * (n_marker_segments + 1) + n_marker_segments
+    )
+    print(f"n_segments: {n_segments}")
     environment = DLO(
         sim_settings=SimulationSettings(timestep, True, Solver.DENSE_LINEAR),
-        env_settings=DLOSettings(
-            n_bodies=100,
-            body_length=0.02,
-            constraint_type=ConstraintType.SE3.value,
+        env_settings=DLOSettings.create(
+            n_segments=n_segments,
+            length=0.6,
+            radius=0.016,
+            density=1000,
+            pose_estimate_linear_offsets=marker_offsets,
+            gripper1_offset=Transform(grippermc_to_marker, math.Rotations.unitary),
+            gripper2_offset=Transform(-grippermc_to_marker, math.Rotations.unitary),
             loose_end=False,
         ),
     )
-    yz_linear_stiffness = 1e4
-    x_linear_stiffness = 1e4
-    bend_linear_stiffness = 1e4
-    torsion_linear_stiffness = 1e4
 
-    yz_quadratic_stiffness = 0.0
-    x_quadratic_stiffness = 0.0
-    bend_quadratic_stiffness = 0.0
-    torsion_quadratic_stiffness = 0.0
+    nu = 0.333
+    E = 1e7
+    cable_param = CableParameters(
+        youngs_modulus=E,
+        shear_modulus=E / (2 * (1 + nu)),
+        damping=environment.default_param.sparse_param.cable_param.damping,
+    )
+    stiffness = cable_param.get_stiffness(
+        0.016, environment.env_settings.segment_halflength * 2
+    )
 
     env_param = environment.default_param.tree_replace(
-        src={
-            "sparse_param.coupled_constraint_param": {
-                "linear_stiffness.data": jnp.array(
-                    [
-                        x_linear_stiffness,
-                        yz_linear_stiffness,
-                        yz_linear_stiffness,
-                        bend_linear_stiffness,
-                        bend_linear_stiffness,
-                        torsion_linear_stiffness,
-                    ]
-                ),
-                "quadratic_stiffness.data": jnp.array(
-                    [
-                        x_quadratic_stiffness,
-                        yz_quadratic_stiffness,
-                        yz_quadratic_stiffness,
-                        bend_quadratic_stiffness,
-                        bend_quadratic_stiffness,
-                        torsion_quadratic_stiffness,
-                    ]
-                ),
-                "is_velocity": jnp.array([0, 0, 0, 0, 0, 0], dtype=bool),
-            }
-        }
-    )
-    env_param = env_param.tree_replace(
-        {
-            f"constraint_param.is_velocity.grapple2_lock": {5: True},
-        }
+        src={"sparse_param.cable_param": cable_param}
     )
 
-    initial_state = environment.state_from_angles(env_param)
-    environment.lock_joints[1].get_free_degrees(initial_state, env_param)
+    initial_state = environment.get_neutral_state(env_param)
 
-    scene = EnvironmentScene(environment, env_param, initial_state)
+    scene = EnvironmentScene(environment, env_param, initial_state, debug_render=False)
     app = Application(scene, 60, "default")
     app.run()

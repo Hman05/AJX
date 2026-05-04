@@ -14,7 +14,8 @@ class FreeBody(Environment):
 
         self.timestep = sim_settings.timestep
         self.state_tangent_dim = 12 * 2
-        self.settings = sim_settings
+        self.sim_settings = sim_settings
+        self.env_settings = None
         self._build_sim(sim_settings)
         self.dynamic_residual_names = self.get_state_residual_names()
         self.control_names = []
@@ -34,7 +35,7 @@ class FreeBody(Environment):
             color=(0.9, 0.2, 0.2),
         )
 
-        self.body = RigidBody("body", ("box",))
+        self.body = RigidBody("body", [("box", Transform.unitary)])
         body_param = RigidBodyParameters.create(
             mass=1.0, inertia_diag=inertia, name="body"
         )
@@ -61,13 +62,12 @@ class FreeBody(Environment):
             constraint_param,
             sparse_param=FreeBodySparseParam(),
         )
-
-        self.geometry_list = (self.box,)
-        self.extra_geometry = (
-            geometry.Square(
-                "ground", 1.5, 1.5, (0.0, -3.0, 0.0), color=(0.2, 0.5, 0.2)
-            ),
+        self.ground = geometry.Square(
+            "ground", 1.5, 1.5, (0.0, -3.0, 0.0), color=(0.2, 0.5, 0.2)
         )
+
+        self.geometry_list = (self.box, self.ground)
+        self.extra_geometry = [("ground", Transform.unitary())]
 
     def observation_to_configuration(self, observation, params):
         pos = jnp.zeros([1, 3])

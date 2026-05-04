@@ -26,7 +26,28 @@ The following Python packages have to be installed to run the files
 - [loguru](https://loguru.readthedocs.io/en/stable/)
 - [panda3D](https://www.panda3d.org/) (used in **`scenes`**)
 - [matplotlib](https://matplotlib.org/) (used in **`notebooks`**)
+- [imageio](https://imageio.readthedocs.io/en/stable/) (used to create animations in **`notebooks`**. Install with **`pip install imageio[ffmpeg]`**)
 
-## Running the project
-In this repository, there are executable scripts **`scenes`** and Jupyter notebooks under **`notebooks`**. To run the scripts under **`scenes`**, it
-is important to set the **PYTHONPATH** environment variable to the workspace directory to avoid import errors.
+### Running scripts
+
+To run a script from the **`scenes/`** directory:
+
+1. Open a terminal
+2. Navigate to the project root (workspace directory)
+3. Run one of the following commands:
+
+```bash
+python -m scenes.cartpole
+python -m scenes.dlo
+```
+
+## Installing with pip
+You can install the project directly from GitHub:
+
+```bash
+pip install git+ssh://git@github.com/hman05/ajx.git
+```
+To install from a specific branch:
+```bash
+pip install git+ssh://git@github.com/hman05/ajx.git@<branch-name>
+```

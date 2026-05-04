@@ -36,6 +36,9 @@ class Environment(ABC):
         state, ((qdot_next, mul), code) = self.sim.pre_step(state, u, param)
         return self.sim.observe(state, qdot_next, param)
 
+    def observe_state_nostep(self, state, u, param):
+        return self.sim.observe(state, None, param)
+
     def step(self, state, action, param):
         state, ((qdot_next, multipliers), code) = self.sim.pre_step(
             state, action, param
