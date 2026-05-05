@@ -223,9 +223,9 @@ class DLOAttached(Environment):
         for i in range(self.env_settings.n_bodies):
             box = geometry.Box(
                 f"box{i}",
-                self.env_settings.body_length,
-                self.env_settings.body_side_length,
-                self.env_settings.body_side_length,
+                0.5*self.env_settings.body_length,
+                0.5*self.env_settings.body_side_length,
+                0.5*self.env_settings.body_side_length,
                 translation=(0.0, 0.0, 0.0),
                 color=tuple([*gradient[i]]),
             )
@@ -266,8 +266,8 @@ class DLOAttached(Environment):
                 free_degree=5,
                 frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.quat_from_axis_angle(jnp.array([0.0, 1.0, 0.0]), -0.0 * jnp.pi)),
                 frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), math.quat_from_axis_angle(jnp.array([0.0, 1.0, 0.0]), -0.0 * jnp.pi)),
-                compliance=1e-5,
-                damping=2 * sim_settings.timestep,
+                compliance=1e-8,
+                damping=2 * self.reference_timestep,
                 b=0.0004,
                 name="attachment_hinge",
             )
@@ -275,7 +275,7 @@ class DLOAttached(Environment):
             self.attachment_constraint = OneBodyConstraint(
                 name=f"attachment_lock",
                 body="body0",
-                constraint_type=ConstraintType.SE3.value,
+                constraint_type=self.env_settings.constraint_type,
             )
             attachment_constraint_param = ConstraintParameters.create_locked(
                 frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), rotation1),
@@ -303,8 +303,8 @@ class DLOAttached(Environment):
                 ConstraintParameters.create_locked(
                     frame_a=Frame(jnp.array([0.5*bl, 0.0, 0.0]), rotation1),
                     frame_b=Frame(jnp.array([-0.5*bl, 0.0, 0.0]), rotation2),
-                    compliance=1e-5,
-                    viscous_compliance=1e-3,
+                    compliance=1e-8,
+                    viscous_compliance=1e-5,
                     damping=2 * self.reference_timestep,
                     offset=0.0,
                     name=f"lock{i}",
