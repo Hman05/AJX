@@ -123,7 +123,7 @@ class LockAtZeroSpeedMotor(PreStepModifier):
     def update_params(self, state: DLOState, u, param: SimulationParameters):
         lock = u[self.u_idx] == 0.0
         not_lock = jnp.logical_not(lock)
-        current_offset = self.constraint.func2(state, param)[self.target_dof]
+        current_offset = self.constraint.object_func(state, param)[self.target_dof]
         target = state.lock_targets[self.lock_idx] * lock + u[self.u_idx] * not_lock
         new_lock_target = (
             state.lock_targets[self.lock_idx] * lock + current_offset * not_lock
@@ -188,38 +188,7 @@ class DLOAttached(Environment):
             jnp.arange(n), (gradient_start - gradient_end) / n
         )
         density = self.env_settings.mass_density
-        """
-        grapple_box_length = 0.1
-        grapple1_box = geometry.Box(
-            f"grapple1_box",
-            grapple_box_length,
-            0.6,
-            0.3,
-            translation=(0.0, 0.0, 0.0),
-            color=(0.1, 0.1, 0.1),
-        )
-        grapple2_box = geometry.Box(
-            f"grapple2_box",
-            grapple_box_length,
-            0.6,
-            0.3,
-            translation=(0.0, 0.0, 0.0),
-            color=(0.1, 0.1, 0.1),
-        )
-        grapple1 = RigidBody(f"grapple1", (f"grapple1_box",))
-        grapple1_param = RigidBodyParameters.create(
-            mass=density * 0.4 * 0.4 * grapple_box_length,
-            inertia_diag=grapple1_box.get_diag_inertia(density),
-            name="grapple1",
-        )
-
-        grapple2 = RigidBody(f"grapple2", (f"grapple2_box",))
-        grapple2_param = RigidBodyParameters.create(
-            mass=density * 0.4 * 0.4 * grapple_box_length,
-            inertia_diag=grapple2_box.get_diag_inertia(density),
-            name="grapple2",
-        )
-        """
+        
         for i in range(self.env_settings.n_bodies):
             box = geometry.Box(
                 f"box{i}",
@@ -247,14 +216,6 @@ class DLOAttached(Environment):
         rotation2 = math.quat_from_axis_angle(
             jnp.array([-1.0, 0.0, 0.0]), -0.0 * jnp.pi
         )
-        # if self.env_settings.constraint_type == ConstraintType.PRISMATIC.value:
-        #     # v-axis (uvw) should point along x-axis (rotate 90 deg about z-axis)
-        #     rotation1 = math.quat_from_axis_angle(
-        #         jnp.array([0.0, 0.0, 1.0]), -0.5 * jnp.pi
-        #     )
-        #     rotation2 = math.quat_from_axis_angle(
-        #         jnp.array([0.0, 0.0, 1.0]), -0.5 * jnp.pi
-        #     )
 
         if self.env_settings.hinge_motor_attachment:
             self.attachment_constraint = OneBodyConstraint(
@@ -264,11 +225,11 @@ class DLOAttached(Environment):
             )
             attachment_constraint_param = ConstraintParameters.create(
                 free_degree=5,
-                frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.quat_from_axis_angle(jnp.array([0.0, 1.0, 0.0]), -0.0 * jnp.pi)),
-                frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), math.quat_from_axis_angle(jnp.array([0.0, 1.0, 0.0]), -0.0 * jnp.pi)),
+                frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_y),
+                frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_y),
                 compliance=1e-8,
                 damping=2 * self.reference_timestep,
-                b=0.0004,
+                b=1e5,
                 name="attachment_hinge",
             )
         else:
