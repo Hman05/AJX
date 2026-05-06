@@ -69,7 +69,7 @@ class DLOSettings:
             n_segments,
             0.5 * segment_length,
             radius,
-            ConstraintType.SE3.value,
+            ConstraintType.BEND_TWIST.value,
             density,
             pose_estimate_bodies,
             pose_estimate_constraints_a,
@@ -978,10 +978,10 @@ class DLO(Environment):
         from scipy.interpolate import CubicSpline, interp1d
 
         # Frame A
-        cs = interp1d(
-            off0a_p, transforms[0].pos, kind="linear", axis=0
-        )  # axis=0 if fp is (N, ...)
-        # cs = CubicSpline(off0a_p, transforms[0].pos[:-1])
+        # cs = interp1d(
+        #     off0a_p, transforms[0].pos, kind="linear", axis=0
+        # )  # axis=0 if fp is (N, ...)
+        cs = CubicSpline(off0a_p, transforms[0].pos)
         new_pos_a = cs(off0a)
         new_rot_a = math.quat_interp(off0a, off0a_p, transforms[0].rot)
         new_transforms_a = Transform(new_pos_a, new_rot_a)
@@ -993,10 +993,10 @@ class DLO(Environment):
             new_transforms_a, frame_offsets_a[:last_interface_w_marker_id]
         )
         # Frame B
-        cs = interp1d(
-            off0b_p, transforms[1].pos, kind="linear", axis=0
-        )  # axis=0 if fp is (N, ...)
-        # cs = CubicSpline(off0b_p, transforms[1].pos[1:])
+        # cs = interp1d(
+        #     off0b_p, transforms[1].pos, kind="linear", axis=0
+        # )  # axis=0 if fp is (N, ...)
+        cs = CubicSpline(off0b_p, transforms[1].pos)
         new_pos_b = cs(off0b)
         new_rot_b = math.quat_interp(off0b, off0b_p, transforms[1].rot)
         new_transforms_b = Transform(new_pos_b, new_rot_b)
