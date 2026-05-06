@@ -108,7 +108,7 @@ def projected_gauss_seidel_block_dense(
     | G_k  Sigma  | | lbda  | = | q |
 
     This solver supports constraints that constrain the same number of degrees of freedom.
-    It is specified through the G_data python dict, entry with key "constraint_block_row_size".
+    It is specified through the G_block_row_size argument.
 
     INPUTS:
         gvel: n_bodies x 1, jax array, current generalized velocity.
