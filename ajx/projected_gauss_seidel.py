@@ -1,8 +1,9 @@
 import jax
 import jax.numpy as jnp
+import os
 
 from ajx.group_operations import sparse_blockrow_mul_blockdiag, sparse_blockrow_mul_vec
-
+from ajx.constraints.base import ConstraintType
 
 @jax.jit
 def gauss_seidel_dense_naive(A, b, x0, Nit):
@@ -100,7 +101,7 @@ def projected_gauss_seidel_dense(
 
 @jax.jit(static_argnames=("G_block_row_size", "h", "Nit"))
 def projected_gauss_seidel_block_dense(
-    gvel, lbda0, G, G_block_row_size, M_inv, Sigma, h, f_ext, q, lbda_limits, Nit
+    gvel, lbda0, G, G_block_row_size, M_inv, Sigma, h, f_ext, q, Nit, constraint_metadata
 ):
     """
     Solves dense system on the form
@@ -125,6 +126,7 @@ def projected_gauss_seidel_block_dense(
     """
 
     nc = G.shape[0] // G_block_row_size  # Number of constraints
+    constraint_type = constraint_metadata["constraint_type"]
 
     # To precompute M^-1 @ G^T
     M_inv_GT = M_inv @ G.T
@@ -167,17 +169,7 @@ def projected_gauss_seidel_block_dense(
         delta_lbda_i = jnp.linalg.solve(Sii, ri)
 
         # Projection step
-        lbda_lower_limit = jax.lax.dynamic_slice(
-            lbda_limits, (row_start, 0), (G_block_row_size, 1)
-        ).flatten()
-        lbda_upper_limit = jax.lax.dynamic_slice(
-            lbda_limits, (row_start, 1), (G_block_row_size, 1)
-        ).flatten()
-        lbda = jax.lax.dynamic_update_slice(
-            lbda,
-            jnp.clip(lbda_i + delta_lbda_i, lbda_lower_limit, lbda_upper_limit),
-            (row_start,),
-        )
+        lbda = jax.lax.dynamic_update_slice(lbda, update_multipliers(lbda_i, delta_lbda_i, constraint_type[c]), (row_start,))
 
         # Update step with correct delta lambda
         delta_lbda_update = (
@@ -204,6 +196,32 @@ def projected_gauss_seidel_block_dense(
 
     u, lbda = jax.lax.fori_loop(0, Nit, pgs_body, (u, lbda))
     return u, lbda
+
+
+def update_multipliers(lbda, delta_lbda, constraint_type):
+    """
+    This function is responsible for updating the multipliers of a constraint in the projected gauss seidel solver. If the constraint is of type HINGE, we projected the multipliers according to a friction law lbda_motor <= mu*r*||lbda_load||, where mu is a friction coefficient, and r is an effective radius.
+    INPUTS:
+        lbda: array of size 6x1, the multipliers for this constraint.
+        delta_lbda: array of size 6x1, the multiplier update for this constraint.
+    OUTPUTS:
+        lbda: array of size 6x1, the updated multipliers for this constraint.
+    """
+    lbda = lbda + delta_lbda
+    
+    # These are passed as environment variables, and the user is responsible for these values.
+    mu = float(os.environ.get("MU", "0.0"))
+    r = float(os.environ.get("EFFECTIVE_RADIUS", "1.0"))
+    
+    def hinge_fn(lbda):
+        hinge_load = jnp.linalg.norm(lbda[:3], ord=2)
+        lbda_motor = jnp.clip(lbda[5], -mu*r*hinge_load, mu*r*hinge_load)     # The 6th multiplier corresponds to the HINGE-axis
+        return lbda.at[5].set(lbda_motor)
+    def not_hinge_fn(lbda):
+        return lbda
+    
+    lbda = jax.lax.cond(constraint_type==ConstraintType.HINGE.value, hinge_fn, not_hinge_fn, lbda)
+    return lbda
 
 
 @jax.jit(static_argnames=("h", "Nit"))

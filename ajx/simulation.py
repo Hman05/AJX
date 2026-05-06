@@ -338,18 +338,7 @@ class Simulation:
 
         M_stacked, M_inv, G, Sigma_data, b_data = self._assemble_blocks(state, param)
         n_rb_dof = 6 * state.gvel.data.shape[0]
-
-        if (
-            self.settings.solver == Solver.SPARSE_PGS
-            or self.settings.solver == Solver.DENSE_PGS
-        ):
-            lbda_limits = jnp.tile(
-                jnp.array([-np.inf, np.inf]),
-                (
-                    Sigma_data.size,
-                    1,
-                ),  # jnp.array([-np.inf, np.inf]), (Sigma_data.size, 1)
-            )  # Set some default, this should be changed such it is collected from the constraints.
+        constraint_metadata = self._assemble_constraint_metadata()
 
         if self.settings.solver == Solver.SPARSE_LINEAR:
             S_sparse, rsi_dict = self._schur_reduction(G, M_inv, Sigma_data)
@@ -393,8 +382,8 @@ class Simulation:
                 self.h,
                 f_ext.flatten(),
                 b_data,
-                lbda_limits,
                 Nit=self.settings.pgs_iterations,
+                constraint_metadata=constraint_metadata
             )
         elif self.settings.solver == Solver.SPARSE_PGS:
             lbda0 = state.multipliers
@@ -760,7 +749,10 @@ class Simulation:
         S = VBCMatrix.create(S_data, row_indices, col_ptr, block_sizes, block_sizes)
 
         return S, rsi_dict
-
+    
+    def _assemble_constraint_metadata(self):
+        return {"constraint_type": jnp.array([c.constraint_type for c in self.constraint_list])}
+        
 
 def _bdot_over_intersection(
     a_indices,
