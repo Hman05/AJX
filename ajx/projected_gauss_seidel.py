@@ -209,13 +209,12 @@ def update_multipliers(lbda, delta_lbda, constraint_type):
     """
     lbda = lbda + delta_lbda
     
-    # These are passed as environment variables, and the user is responsible for these values.
-    mu = float(os.environ.get("MU", "0.0"))
-    r = float(os.environ.get("EFFECTIVE_RADIUS", "1.0"))
+    # This is passed as an environment variable, and the user is responsible for setting this value.
+    mu_r = float(os.environ.get("MU_TIMES_EFFECTIVE_RADIUS", "0.0"))
     
     def hinge_fn(lbda):
         hinge_load = jnp.linalg.norm(lbda[:3], ord=2)
-        lbda_motor = jnp.clip(lbda[5], -mu*r*hinge_load, mu*r*hinge_load)     # The 6th multiplier corresponds to the HINGE-axis
+        lbda_motor = jnp.clip(lbda[5], -mu_r*hinge_load, mu_r*hinge_load)     # The 6th multiplier corresponds to the HINGE-axis
         return lbda.at[5].set(lbda_motor)
     def not_hinge_fn(lbda):
         return lbda
