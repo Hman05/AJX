@@ -1,0 +1,292 @@
+import jax
+import jax.numpy as jnp
+import os
+
+from ajx.group_operations import sparse_blockrow_mul_blockdiag, sparse_blockrow_mul_vec
+from ajx.constraints.base import ConstraintType
+
+
+@jax.jit(static_argnames=("h", "Nit"))
+def projected_gauss_seidel_dense(
+    gvel, lbda0, G, M_inv, Sigma, h, f_ext, q, lbda_limits, Nit
+):
+    """
+    Solves dense system on the form
+    | M  -G_k^T   | | u_k+1 | = | M @ v_k + h*f_ext |
+    | G_k  Sigma  | | lbda  | = | q |
+
+    INPUTS:
+        gvel: ndof x 1, jax array, current generalized velocity.
+        lbda0: nc x 1, jax array
+        G: nc x ndof, jax array
+        M_inv: ndof x ndof, jax array
+        Sigma: nc x 1, jax array, diagonal entries of Sigma matrix
+        h: timestep size
+        f_ext: ndof x 1, external force applied to rigid bodies.
+        q: nc x 1, jax array, right hand side data.
+        lbda_limits: nc x 2, jax array, multiplier limits. Each row has multiplier limits, (lbda_min, lbda_max).
+        Nit: number of iterations
+    """
+
+    nc = G.shape[0]
+
+    # To precompute M^-1 @ G^T
+    M_inv_GT = M_inv @ G.T
+
+    # To precompute diagonal elements of schur complement matrix S = G @ M_inv @ G.T + Sigma
+    S_diag = jnp.einsum("ik,ki->i", G, M_inv_GT) + Sigma
+
+    def constraint_body(c, state):
+        """
+        This is the inner loop body, handling the update of lbda for each constraint
+        """
+        u, lbda = state
+        r = q[c] - jnp.dot(G[c, :], u) - Sigma[c] * lbda[c]
+        delta_lbda = jnp.divide(r, S_diag[c])
+
+        # Projection step
+        old_lbda = lbda[c]
+        lbda = lbda.at[c].set(
+            jnp.clip(lbda[c] + delta_lbda, lbda_limits[0,c], lbda_limits[1,c])
+        )
+
+        # Update step with correct delta lambda
+        delta_lbda_update = lbda[c] - old_lbda
+        u = u + M_inv_GT[:, c] * delta_lbda_update
+
+        return (u, lbda)
+
+    def pgs_body(j, state):
+        """
+        This is the outer loop body, handling the 'Nit' iterations
+        """
+        return jax.lax.fori_loop(0, nc, constraint_body, state)
+
+    lbda = lbda0
+    u = gvel + h * M_inv @ f_ext + M_inv_GT @ lbda
+
+    u, lbda = jax.lax.fori_loop(0, Nit, pgs_body, (u, lbda))
+    return u, lbda
+
+
+@jax.jit(static_argnames=("h", "Nit"))
+def projected_gauss_seidel_sparse(
+    gvel, lbda0, G, M_inv, Sigma, h, f_ext, q, lbda_limits, Nit
+):
+    """
+    Solves sparse system on the form
+    | M  -G_k^T   | | u_k+1 | = | M @ v_k + h*f_ext |
+    | G_k  Sigma  | | lbda  | = | q |
+
+    INPUTS:
+        gvel: ndof x 1, jax array, current generalized velocity.
+        lbda0: nc x 1, jax array
+        G: nc x ndof, ajx.block_sparse.VBRMatrix
+        M_inv: ajx.block_sparse.SVBDMatrix
+        Sigma: jax array, from which a diagonal matrix can be formed
+        h: timestep size
+        f_ext: ndof x 1, external force applied to rigid bodies.
+        q: nc x 1, jax array, right hand side data.
+        lbda_limits: 2 x nc, jax array, multiplier limits. Each column has multiplier limits, (lbda_min, lbda_max).
+        Nit: number of iterations
+    """
+
+    schur_block_diag = get_schur_block_diagonal_elements(G, M_inv, Sigma)
+    group_row_offsets = get_group_row_offsets(
+        G
+    )  # Row offset for each group in the actual dense matrix G
+
+    def constraint_body(group_index, j, group, state):
+        """
+        This routine is intended to calculate one PGS-iteration per constraint
+        """
+        u, lbda = state
+
+        # Indexing the rows of the jth block in group
+        row_start = (
+            group_row_offsets[group_index] + j * group.row_size
+        )  # Row start index in full matrix
+        Gi = G.get_row_from_group(group.offset, j, group.row_size, group.col_sizes)
+        qi = jax.lax.dynamic_slice(q, (row_start,), (group.row_size,))
+        lbda_i = jax.lax.dynamic_slice(lbda, (row_start,), (group.row_size,))
+        sigma_i = jax.lax.dynamic_slice(Sigma, (row_start,), (group.row_size,))
+
+        Gi_u = sparse_blockrow_mul_vec(
+            Gi, u, group.col_sizes, jnp.array(group.col_offsets)[j]
+        )
+        ri = qi - Gi_u - sigma_i * lbda_i
+        Sii = jax.lax.dynamic_slice(
+            schur_block_diag[group_index],
+            (j * group.row_size, 0),
+            (group.row_size, group.row_size),
+        )
+
+        # Solve for delta lambda and project the multipliers
+        delta_lbda_i = jnp.linalg.solve(Sii, ri)
+        lbda_lower_limit = jax.lax.dynamic_slice(
+            lbda_limits, (0, row_start), (1, group.row_size)
+        ).flatten()
+        lbda_upper_limit = jax.lax.dynamic_slice(
+            lbda_limits, (1, row_start), (1, group.row_size)
+        ).flatten()
+        lbda = jax.lax.dynamic_update_slice(
+            lbda,
+            jnp.clip(lbda_i + delta_lbda_i, lbda_lower_limit, lbda_upper_limit),
+            (row_start,),
+        )
+
+        delta_lbda_update = (
+            jax.lax.dynamic_slice(lbda, (row_start,), (group.row_size,)) - lbda_i
+        )
+        u = update_generalized_velocity(
+            u,
+            M_inv,
+            Gi,
+            delta_lbda_update,
+            group.col_sizes,
+            jnp.array(group.col_offsets)[j],
+            jnp.array(group.col_sq_offsets)[j],
+        )
+
+        return (u, lbda)
+
+    def pgs_body(j, state):
+        """
+        This is the outer loop body, handling the 'Nit' iterations.
+        The grouped_fori_loop, returns the updated state = (u, lbda) after one pgs-iteration.
+        """
+        u, lbda = state
+        return pgs_grouped_fori_loop(G.row_groups, constraint_body, (u, lbda))
+
+    # To initialize the multipliers and the generalized velocity
+    lbda = lbda0
+    u = gvel + h * M_inv.mul_vector(f_ext) + M_inv.mul_vector(G.vector_mul(lbda))
+
+    # This is the entry point for the PGS-solver
+    u, lbda = jax.lax.fori_loop(0, Nit, pgs_body, (u, lbda))
+    return u, lbda
+
+
+def get_schur_block_diagonal_elements(G, M_inv, Sigma):
+    """
+    INPUTS:
+        G: nc x ndof, ajx.block_sparse.VBRMatrix
+        M_inv: ajx.block_sparse.SVBDMatrix, inverse mass matrix
+        Sigma: jax array, from which a diagonal matrix can be formed.
+    OUTPUTS:
+        schur_block_diag: list of len(G.row_groups) with jax arrays of shape (group.row_size*num_block_rows, group.row_size)
+    """
+
+    # Pre-allocate initial state for jit-compatibility. group.col_offsets seems to be an array of size (num_block_rows, num_blocks) with col_offset for each block in the block row.
+    initial_state = tuple(
+        jnp.zeros((group.row_size * num_block_rows, group.row_size))
+        for num_block_rows, group in G.row_groups
+    )
+    group_row_offsets = get_group_row_offsets(
+        G
+    )  # Row offset for each group in the actual dense matrix G
+
+    def single_schur_block_body(group_index, j, group, state):
+        row_start = (
+            group_row_offsets[group_index] + j * group.row_size
+        )  # Row start index in full matrix
+
+        Gi = G.get_row_from_group(
+            group.offset, j, group.row_size, group.col_sizes
+        )  # To get data in G from block row j
+        Gi_M_inv = sparse_blockrow_mul_blockdiag(
+            Gi,
+            M_inv.data,
+            group.col_sizes,
+            jnp.array(group.col_sq_offsets)[j],
+        )
+
+        schur_block = sum(
+            [A @ B.T for A, B in zip(Gi_M_inv, Gi)]
+        )  # G @ M_inv @ G.T for subset of rows
+        sigma_i = jax.lax.dynamic_slice(Sigma, (row_start,), (group.row_size,))
+        schur_block = schur_block.at[jnp.diag_indices(group.row_size)].add(sigma_i)
+
+        state_i = jax.lax.dynamic_update_slice(
+            state[group_index], schur_block, (j * group.row_size, 0)
+        )
+        state = state[:group_index] + (state_i,) + state[group_index + 1 :]
+        return state
+
+    schur_block_diag = pgs_grouped_fori_loop(
+        G.row_groups, single_schur_block_body, initial_state
+    )
+    return schur_block_diag
+
+
+def update_generalized_velocity(
+    u, M_inv, Gi, delta_lbda_update, col_sizes, col_offsets, col_sq_offsets
+):
+    """
+    INPUTS:
+        u: jax array of size nb x 1, generalized velocity.
+        M_inv: ajx.block_sparse.SVBDMatrix, inverse mass matrix
+        Gi: list of constraint jacobian blocks
+        delta_lbda_update: jax array of size r x 1, multiplier update increment
+        col_sizes: list of column sizes for each of the constraint jacobian blocks (See RowGroup class in VBRMatrix)
+        col_offsets: list of column offset for each block (See RowGroup class in VBRMatrix)
+        col_sq_offsets: list of squared column offset for each block (See RowGroup class in VBRMatrix)
+    OUTPUTS:
+        U: updated generalized velocity
+    """
+    assert len(col_sq_offsets) == len(col_sizes)
+
+    Gt_lbda_i = [
+        A.T @ delta_lbda_update for A in Gi
+    ]  # Now we need to index which rigid bodies are effected in u and M_inv
+
+    assert len(Gt_lbda_i) == len(col_sizes)
+
+    vel_update_blocks = [
+        jax.lax.dynamic_slice(
+            M_inv.data,
+            (col_sq_offsets[i],),
+            (col_sizes[i] * col_sizes[i],),
+        ).reshape(col_sizes[i], col_sizes[i])
+        @ Gt_lbda_i[i]
+        for i in range(len(Gt_lbda_i))
+    ]
+
+    for j, (start_idx, size) in enumerate(zip(col_offsets, col_sizes)):
+        new_u = jax.lax.dynamic_slice(u, (start_idx,), (size,)) + jnp.array(
+            vel_update_blocks[j]
+        )
+        u = jax.lax.dynamic_update_slice(u, new_u, (start_idx,))
+    return u
+
+
+def pgs_grouped_fori_loop(groups, body_fun, init_val):
+    val = init_val
+    for group_index, (count, group_data) in enumerate(groups):
+
+        def body_fun_aug(i, carry):
+            return body_fun(group_index, i, group_data, carry)
+
+        val = jax.lax.fori_loop(0, count, body_fun_aug, val)
+
+    return val
+
+
+def get_group_row_offsets(G):
+    """
+    Calculates the row offset where each group starts in the actual dense matrix G.
+    INPUTS:
+        G: nc x ndof, ajx.block_sparse.VBRMatrix
+    OUTPUTS:
+        row_offsets: jax array of size number_of_groups x 1.
+    """
+    num_rows_per_group = tuple(
+        num_block_rows * g.row_size for num_block_rows, g in G.row_groups
+    )
+    row_offsets = jnp.cumulative_sum(jnp.array((0,) + num_rows_per_group))[:-1]
+    return row_offsets
+
+
+def check_finite(x):
+    if not jnp.all(jnp.isfinite(x)):
+        raise ValueError("x contains NaN or Inf!")

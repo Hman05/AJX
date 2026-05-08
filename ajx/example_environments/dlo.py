@@ -84,6 +84,7 @@ class DLOState(ParameterNode):
     conf: Configuration
     gvel: GeneralizedVelocity
     lock_targets: jax.Array
+    multipliers: jax.Array = struct.field(default_factory=lambda: jnp.zeros([0]))
 
     tangent_restrictions: Tuple[str, ...] = struct.field(
         pytree_node=False, default=tuple(["conf", "gvel", "lock_targets"])
@@ -854,7 +855,12 @@ class DLO(Environment):
         )
         targets = jnp.zeros([12]).at[6:9].set(gripper2_pos)
         targets = targets.at[0:3].set(gripper1_pos)
-        return DLOState(initial_conf, initial_gvel, targets)
+
+        # When using the PGS-solver with warm starting, multiplier size needs to be correctly specified for jax.jit compilation to work
+        multipliers_size = self.get_multiplier_size()
+        multipliers = jnp.zeros([multipliers_size])
+
+        return DLOState(initial_conf, initial_gvel, targets, multipliers=multipliers)
 
     def convert_marker_transforms_to_body_transforms(
         self, marker_transforms: Transform
