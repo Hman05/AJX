@@ -166,7 +166,6 @@ def projected_gauss_seidel_sparse(
     return u, lbda
 
 
-@jax.jit
 def get_inverse_schur_block_diagonal_elements(G, M_inv, Sigma):
     """
     INPUTS:
@@ -201,9 +200,7 @@ def get_inverse_schur_block_diagonal_elements(G, M_inv, Sigma):
             jnp.array(group.col_sq_offsets)[j],
         )
 
-        schur_block = sum(
-            [A @ B.T for A, B in zip(Gi_M_inv, Gi)]
-        )  # G @ M_inv @ G.T for subset of rows
+        schur_block = jax.vmap(lambda A, B: A @ B.T)(jnp.stack(Gi_M_inv), jnp.stack(Gi)).sum(axis=0)  # sum([A @ B.T for A, B in zip(Gi_M_inv, Gi)])  # G @ M_inv @ G.T for subset of rows
         sigma_i = jax.lax.dynamic_slice(Sigma, (row_start,), (group.row_size,))
         schur_block = schur_block.at[jnp.diag_indices(group.row_size)].add(sigma_i)
 
@@ -275,7 +272,6 @@ def pgs_grouped_fori_loop(groups, body_fun, init_val):
     return val
 
 
-@jax.jit
 def get_group_row_offsets(G):
     """
     Calculates the row offset where each group starts in the actual dense matrix G.
