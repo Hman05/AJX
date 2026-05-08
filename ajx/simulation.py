@@ -381,7 +381,7 @@ class Simulation:
                 self.h,
                 f_ext.flatten(),
                 b_data,
-                lbda_limits=jnp.vstack([jnp.full((nc,),  jnp.inf), jnp.full((nc,), -jnp.inf)]),
+                lbda_limits=jnp.vstack([jnp.full((nc,),  -jnp.inf), jnp.full((nc,), jnp.inf)]),
                 Nit=self.settings.pgs_iterations,
             )
         elif self.settings.solver == Solver.SPARSE_PGS:
@@ -396,7 +396,7 @@ class Simulation:
                 self.h,
                 f_ext.flatten(),
                 b_data,
-                lbda_limits=jnp.vstack([jnp.full((nc,),  jnp.inf), jnp.full((nc,), -jnp.inf)]),
+                lbda_limits=jnp.vstack([jnp.full((nc,),  -jnp.inf), jnp.full((nc,), jnp.inf)]),
                 Nit=self.settings.pgs_iterations,
             )
         else:

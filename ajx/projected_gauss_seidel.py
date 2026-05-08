@@ -69,130 +69,6 @@ def projected_gauss_seidel_dense(
     return u, lbda
 
 
-@jax.jit(static_argnames=("G_block_row_size", "h", "Nit"))
-def projected_gauss_seidel_block_dense(
-    gvel, lbda0, G, G_block_row_size, M_inv, Sigma, h, f_ext, q, Nit, constraint_metadata
-):
-    """
-    Solves dense system on the form
-    | M  -G_k^T   | | u_k+1 | = | M @ v_k + h*f_ext |
-    | G_k  Sigma  | | lbda  | = | q |
-
-    This solver supports constraints that constrain the same number of degrees of freedom.
-    It is specified through the G_block_row_size argument.
-
-    INPUTS:
-        gvel: n_bodies x 1, jax array, current generalized velocity.
-        lbda0: (nc*block_row_size) x 1, jax array
-        G_data: jax array of size (nc*block_row_size) x n_bodies
-        G_block_row_size: number of rows in G per constraint block, a positive integer.
-        M_inv: n_bodies x n_bodies, jax array
-        Sigma: (nc*block_row_size) x 1, jax array, diagonal entries of Sigma matrix
-        h: timestep size
-        f_ext: n_bodies x 1, external force applied to rigid bodies.
-        q: (nc*block_row_size) x 1, jax array, right hand side data.
-        lbda_limits: (nc*block_row_size) x 2, jax array, multiplier limits. Each row has multiplier limits, (lbda_min, lbda_max).
-        Nit: number of iterations
-    """
-
-    nc = G.shape[0] // G_block_row_size  # Number of constraints
-    constraint_type = constraint_metadata["constraint_type"]
-
-    # To precompute M^-1 @ G^T
-    M_inv_GT = M_inv @ G.T
-
-    # To precompute necessary elements of schur complement matrix S = G @ M_inv @ G.T + Sigma.
-    def schur_body(c, schur):
-        row_start = c * G_block_row_size
-
-        Gi = jax.lax.dynamic_slice(G, (row_start, 0), (G_block_row_size, G.shape[1]))
-        Sigma_block = jax.lax.dynamic_slice(Sigma, (row_start,), (G_block_row_size,))
-
-        # To compute and update with the Schur block Sii, corrsponding to constraint 'c'.
-        S_block = Gi @ M_inv @ Gi.T + jnp.diag(Sigma_block)
-        schur = jax.lax.dynamic_update_slice(schur, S_block, (row_start, 0))
-        return schur
-
-    schur_blocks = jnp.zeros([nc * G_block_row_size, G_block_row_size])
-    schur_blocks = jax.lax.fori_loop(0, nc, schur_body, schur_blocks)
-
-    def constraint_body(c, state):
-        """
-        This is the inner loop body, handling the update of 'lbda' and 'u' for each constraint
-        """
-        u, lbda = state
-
-        # To find the start index for constraint block.
-        row_start = c * G_block_row_size
-
-        qi = jax.lax.dynamic_slice(q, (row_start,), (G_block_row_size,))
-        Gi = jax.lax.dynamic_slice(G, (row_start, 0), (G_block_row_size, G.shape[1]))
-        Gi_u = jnp.dot(Gi, u)
-        sigma_ii = jax.lax.dynamic_slice(Sigma, (row_start,), (G_block_row_size,))
-        lbda_i = jax.lax.dynamic_slice(lbda, (row_start,), (G_block_row_size,))
-        Sigma_lbda_i = sigma_ii * lbda_i
-
-        ri = qi - Gi_u - Sigma_lbda_i
-        Sii = jax.lax.dynamic_slice(
-            schur_blocks, (row_start, 0), (G_block_row_size, G_block_row_size)
-        )
-        delta_lbda_i = jnp.linalg.solve(Sii, ri)
-
-        # Projection step
-        lbda = jax.lax.dynamic_update_slice(lbda, update_multipliers(lbda_i, delta_lbda_i, constraint_type[c]), (row_start,))
-
-        # Update step with correct delta lambda
-        delta_lbda_update = (
-            jax.lax.dynamic_slice(lbda, (row_start,), (G_block_row_size,)) - lbda_i
-        )
-        u = (
-            u
-            + jax.lax.dynamic_slice(
-                M_inv_GT, (0, row_start), (M_inv_GT.shape[0], G_block_row_size)
-            )
-            @ delta_lbda_update
-        )
-
-        return (u, lbda)
-
-    def pgs_body(j, state):
-        """
-        This is the outer loop body, handling the 'Nit' iterations
-        """
-        return jax.lax.fori_loop(0, nc, constraint_body, state)
-
-    lbda = lbda0
-    u = gvel + h * M_inv @ f_ext + M_inv_GT @ lbda
-
-    u, lbda = jax.lax.fori_loop(0, Nit, pgs_body, (u, lbda))
-    return u, lbda
-
-
-def update_multipliers(lbda, delta_lbda, constraint_type):
-    """
-    This function is responsible for updating the multipliers of a constraint in the projected gauss seidel solver. If the constraint is of type HINGE, we projected the multipliers according to a friction law lbda_motor <= mu*r*||lbda_load||, where mu is a friction coefficient, and r is an effective radius.
-    INPUTS:
-        lbda: array of size 6x1, the multipliers for this constraint.
-        delta_lbda: array of size 6x1, the multiplier update for this constraint.
-    OUTPUTS:
-        lbda: array of size 6x1, the updated multipliers for this constraint.
-    """
-    lbda = lbda + delta_lbda
-    
-    # This is passed as an environment variable, and the user is responsible for setting this value.
-    mu_r = float(os.environ.get("MU_TIMES_EFFECTIVE_RADIUS", "0.0"))
-    
-    def hinge_fn(lbda):
-        hinge_load = jnp.linalg.norm(lbda[:3], ord=2)
-        lbda_motor = jnp.clip(lbda[5], -mu_r*hinge_load, mu_r*hinge_load)     # The 6th multiplier corresponds to the HINGE-axis
-        return lbda.at[5].set(lbda_motor)
-    def not_hinge_fn(lbda):
-        return lbda
-    
-    lbda = jax.lax.cond(constraint_type==ConstraintType.HINGE.value, hinge_fn, not_hinge_fn, lbda)
-    return lbda
-
-
 @jax.jit(static_argnames=("h", "Nit"))
 def projected_gauss_seidel_sparse(
     gvel, lbda0, G, M_inv, Sigma, h, f_ext, q, lbda_limits, Nit
@@ -280,7 +156,7 @@ def projected_gauss_seidel_sparse(
         The grouped_fori_loop, returns the updated state = (u, lbda) after one pgs-iteration.
         """
         u, lbda = state
-        return pgs_grouped_fori_loop(G.groups, constraint_body, (u, lbda))
+        return pgs_grouped_fori_loop(G.row_groups, constraint_body, (u, lbda))
 
     # To initialize the multipliers and the generalized velocity
     lbda = lbda0
@@ -298,13 +174,13 @@ def get_schur_block_diagonal_elements(G, M_inv, Sigma):
         M_inv: ajx.block_sparse.SVBDMatrix, inverse mass matrix
         Sigma: jax array, from which a diagonal matrix can be formed.
     OUTPUTS:
-        schur_block_diag: list of len(G.groups) with jax arrays of shape (group.row_size*num_block_rows, group.row_size)
+        schur_block_diag: list of len(G.row_groups) with jax arrays of shape (group.row_size*num_block_rows, group.row_size)
     """
 
     # Pre-allocate initial state for jit-compatibility. group.col_offsets seems to be an array of size (num_block_rows, num_blocks) with col_offset for each block in the block row.
     initial_state = tuple(
         jnp.zeros((group.row_size * num_block_rows, group.row_size))
-        for num_block_rows, group in G.groups
+        for num_block_rows, group in G.row_groups
     )
     group_row_offsets = get_group_row_offsets(
         G
@@ -317,7 +193,7 @@ def get_schur_block_diagonal_elements(G, M_inv, Sigma):
 
         Gi = G.get_row_from_group(
             group.offset, j, group.row_size, group.col_sizes
-        )  # To get data in G[row_start:row_]
+        )  # To get data in G from block row j
         Gi_M_inv = sparse_blockrow_mul_blockdiag(
             Gi,
             M_inv.data,
@@ -338,7 +214,7 @@ def get_schur_block_diagonal_elements(G, M_inv, Sigma):
         return state
 
     schur_block_diag = pgs_grouped_fori_loop(
-        G.groups, single_schur_block_body, initial_state
+        G.row_groups, single_schur_block_body, initial_state
     )
     return schur_block_diag
 
@@ -405,7 +281,7 @@ def get_group_row_offsets(G):
         row_offsets: jax array of size number_of_groups x 1.
     """
     num_rows_per_group = tuple(
-        num_block_rows * g.row_size for num_block_rows, g in G.groups
+        num_block_rows * g.row_size for num_block_rows, g in G.row_groups
     )
     row_offsets = jnp.cumulative_sum(jnp.array((0,) + num_rows_per_group))[:-1]
     return row_offsets

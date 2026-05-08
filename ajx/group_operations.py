@@ -97,7 +97,7 @@ if __name__ == "__main__":
     )
 
     S_sparse = jnp.zeros([5, 6, 6])
-    result = grouped_fori_loop(G.groups, step, S_sparse)
+    result = grouped_fori_loop(G.row_groups, step, S_sparse)
     S_dense2 = jax.scipy.linalg.block_diag(*result)
 
     # Should be zero
@@ -107,7 +107,7 @@ if __name__ == "__main__":
     # Test
     j = 1
     Gi_test = G.to_scalar_matrix()[6 * (j + 1) : 6 * (j + 2)]
-    group = G.groups[1][1]
+    group = G.row_groups[1][1]
     Gi = G.get_row_from_group(group.offset, j, group.row_size, group.col_sizes)
     Gi_M_inv = sparse_blockrow_mul_blockdiag(
         Gi,
