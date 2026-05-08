@@ -91,7 +91,7 @@ def projected_gauss_seidel_sparse(
         Nit: number of iterations
     """
 
-    schur_block_diag = get_schur_block_diagonal_elements(G, M_inv, Sigma)
+    schur_block_diag_inv = get_inverse_schur_block_diagonal_elements(G, M_inv, Sigma)
     group_row_offsets = get_group_row_offsets(
         G
     )  # Row offset for each group in the actual dense matrix G
@@ -115,29 +115,28 @@ def projected_gauss_seidel_sparse(
             Gi, u, group.col_sizes, jnp.array(group.col_offsets)[j]
         )
         ri = qi - Gi_u - sigma_i * lbda_i
-        Sii = jax.lax.dynamic_slice(
-            schur_block_diag[group_index],
+        Sii_inv = jax.lax.dynamic_slice(
+            schur_block_diag_inv[group_index],
             (j * group.row_size, 0),
             (group.row_size, group.row_size),
         )
 
         # Solve for delta lambda and project the multipliers
-        delta_lbda_i = jnp.linalg.solve(Sii, ri)
+        delta_lbda_i = Sii_inv @ ri
         lbda_lower_limit = jax.lax.dynamic_slice(
             lbda_limits, (0, row_start), (1, group.row_size)
         ).flatten()
         lbda_upper_limit = jax.lax.dynamic_slice(
             lbda_limits, (1, row_start), (1, group.row_size)
         ).flatten()
+        lbda_i_clipped = jnp.clip(lbda_i + delta_lbda_i, lbda_lower_limit, lbda_upper_limit)
         lbda = jax.lax.dynamic_update_slice(
             lbda,
-            jnp.clip(lbda_i + delta_lbda_i, lbda_lower_limit, lbda_upper_limit),
+            lbda_i_clipped,
             (row_start,),
         )
 
-        delta_lbda_update = (
-            jax.lax.dynamic_slice(lbda, (row_start,), (group.row_size,)) - lbda_i
-        )
+        delta_lbda_update = lbda_i_clipped - lbda_i
         u = update_generalized_velocity(
             u,
             M_inv,
@@ -167,14 +166,15 @@ def projected_gauss_seidel_sparse(
     return u, lbda
 
 
-def get_schur_block_diagonal_elements(G, M_inv, Sigma):
+@jax.jit
+def get_inverse_schur_block_diagonal_elements(G, M_inv, Sigma):
     """
     INPUTS:
         G: nc x ndof, ajx.block_sparse.VBRMatrix
         M_inv: ajx.block_sparse.SVBDMatrix, inverse mass matrix
         Sigma: jax array, from which a diagonal matrix can be formed.
     OUTPUTS:
-        schur_block_diag: list of len(G.row_groups) with jax arrays of shape (group.row_size*num_block_rows, group.row_size)
+        schur_block_diag_inv: tuple of len(G.row_groups) with jax arrays of shape (group.row_size*num_block_rows, group.row_size)
     """
 
     # Pre-allocate initial state for jit-compatibility. group.col_offsets seems to be an array of size (num_block_rows, num_blocks) with col_offset for each block in the block row.
@@ -207,16 +207,19 @@ def get_schur_block_diagonal_elements(G, M_inv, Sigma):
         sigma_i = jax.lax.dynamic_slice(Sigma, (row_start,), (group.row_size,))
         schur_block = schur_block.at[jnp.diag_indices(group.row_size)].add(sigma_i)
 
+        # Calculate schur block inverse
+        schur_block_inv = jnp.linalg.inv(schur_block)
+
         state_i = jax.lax.dynamic_update_slice(
-            state[group_index], schur_block, (j * group.row_size, 0)
+            state[group_index], schur_block_inv, (j * group.row_size, 0)
         )
         state = state[:group_index] + (state_i,) + state[group_index + 1 :]
         return state
 
-    schur_block_diag = pgs_grouped_fori_loop(
+    schur_block_diag_inv = pgs_grouped_fori_loop(
         G.row_groups, single_schur_block_body, initial_state
     )
-    return schur_block_diag
+    return schur_block_diag_inv
 
 
 def update_generalized_velocity(
@@ -272,6 +275,7 @@ def pgs_grouped_fori_loop(groups, body_fun, init_val):
     return val
 
 
+@jax.jit
 def get_group_row_offsets(G):
     """
     Calculates the row offset where each group starts in the actual dense matrix G.
@@ -285,8 +289,3 @@ def get_group_row_offsets(G):
     )
     row_offsets = jnp.cumulative_sum(jnp.array((0,) + num_rows_per_group))[:-1]
     return row_offsets
-
-
-def check_finite(x):
-    if not jnp.all(jnp.isfinite(x)):
-        raise ValueError("x contains NaN or Inf!")
