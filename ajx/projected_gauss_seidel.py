@@ -5,36 +5,6 @@ import os
 from ajx.group_operations import sparse_blockrow_mul_blockdiag, sparse_blockrow_mul_vec
 from ajx.constraints.base import ConstraintType
 
-@jax.jit
-def gauss_seidel_dense_naive(A, b, x0, Nit):
-    """
-    Implementation of a Gauss Seidel solver operating on dense matrices.
-    INPUTS:
-        A: system matrix, n x n jax array.
-        b: right hand side, n x 1 jax array.
-        x0: initial guess, n x 1 jax array.
-        Nit: number of gauss seidel iterations to use.
-    OUTPUTS:
-        x: solution, n x 1 jax array.
-    """
-    L = jnp.tril(A, k=0)
-    U = jnp.triu(A, k=1)
-    x = x0
-
-    def gauss_seidel_step(i, state):
-        L = state[0]
-        U = state[1]
-        b = state[2]
-        x = state[3]
-        x = jax.scipy.linalg.solve_triangular(L, b - U @ x, lower=True)
-        return (L, U, b, x)
-
-    _, _, _, x = jax.lax.fori_loop(0, Nit, gauss_seidel_step, (L, U, b, x))
-
-    assert jnp.allclose(A @ x, b, rtol=1e-5, atol=1e-8)
-
-    return x
-
 
 @jax.jit(static_argnames=("h", "Nit"))
 def projected_gauss_seidel_dense(
@@ -77,7 +47,7 @@ def projected_gauss_seidel_dense(
         # Projection step
         old_lbda = lbda[c]
         lbda = lbda.at[c].set(
-            jnp.clip(lbda[c] + delta_lbda, lbda_limits[c, 0], lbda_limits[c, 1])
+            jnp.clip(lbda[c] + delta_lbda, lbda_limits[0,c], lbda_limits[1,c])
         )
 
         # Update step with correct delta lambda
@@ -241,7 +211,7 @@ def projected_gauss_seidel_sparse(
         h: timestep size
         f_ext: ndof x 1, external force applied to rigid bodies.
         q: nc x 1, jax array, right hand side data.
-        lbda_limits: nc x 2, jax array, multiplier limits. Each row has multiplier limits, (lbda_min, lbda_max).
+        lbda_limits: 2 x nc, jax array, multiplier limits. Each column has multiplier limits, (lbda_min, lbda_max).
         Nit: number of iterations
     """
 
@@ -278,10 +248,10 @@ def projected_gauss_seidel_sparse(
         # Solve for delta lambda and project the multipliers
         delta_lbda_i = jnp.linalg.solve(Sii, ri)
         lbda_lower_limit = jax.lax.dynamic_slice(
-            lbda_limits, (row_start, 0), (group.row_size, 1)
+            lbda_limits, (0, row_start), (1, group.row_size)
         ).flatten()
         lbda_upper_limit = jax.lax.dynamic_slice(
-            lbda_limits, (row_start, 1), (group.row_size, 1)
+            lbda_limits, (1, row_start), (1, group.row_size)
         ).flatten()
         lbda = jax.lax.dynamic_update_slice(
             lbda,

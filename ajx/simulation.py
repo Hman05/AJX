@@ -26,7 +26,7 @@ from ajx.definitions import (
 from ajx.param import SimulationParameters
 from ajx.pre_step_modifiers import PreStepModifier
 from ajx.projected_gauss_seidel import (
-    projected_gauss_seidel_block_dense,
+    projected_gauss_seidel_dense,
     projected_gauss_seidel_sparse,
 )
 from ajx.sensors import Sensor
@@ -372,21 +372,21 @@ class Simulation:
 
             # To compute solution
             lbda0 = state.multipliers
-            qdot_next, lbda = projected_gauss_seidel_block_dense(
+            qdot_next, lbda = projected_gauss_seidel_dense(
                 gvel,
                 lbda0,
                 G_dense,
-                6,
                 M_inv_dense,
                 Sigma_data,
                 self.h,
                 f_ext.flatten(),
                 b_data,
+                lbda_limits=jnp.vstack([jnp.full((nc,),  jnp.inf), jnp.full((nc,), -jnp.inf)]),
                 Nit=self.settings.pgs_iterations,
-                constraint_metadata=constraint_metadata
             )
         elif self.settings.solver == Solver.SPARSE_PGS:
             lbda0 = state.multipliers
+            nc = Sigma_data.shape[0]
             qdot_next, lbda = projected_gauss_seidel_sparse(
                 gvel,
                 lbda0,
@@ -396,7 +396,7 @@ class Simulation:
                 self.h,
                 f_ext.flatten(),
                 b_data,
-                lbda_limits,
+                lbda_limits=jnp.vstack([jnp.full((nc,),  jnp.inf), jnp.full((nc,), -jnp.inf)]),
                 Nit=self.settings.pgs_iterations,
             )
         else:
