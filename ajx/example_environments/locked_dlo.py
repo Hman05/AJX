@@ -437,3 +437,22 @@ class LockedDLO(DLO):
 
     def control_func(self, observation, last_observation, key_map, control_state):
         return jnp.zeros([12]), control_state
+
+    def _place_hidden_links(self, interp_pos, interp_rot, param, state0):
+        gripper1_transform = Transform(interp_pos[0], interp_rot[0])
+        gripper2_transform = Transform(interp_pos[-1], interp_rot[-1])
+
+        new_conf = Configuration(
+            pos=interp_pos,
+            rot=interp_rot,
+        )
+
+        targets = jnp.stack(
+            [
+                jnp.concatenate([gripper1_transform.pos, gripper1_transform.rot]),
+                jnp.concatenate([gripper2_transform.pos, gripper2_transform.rot]),
+            ]
+        )
+
+        new_state = state0.replace(conf=new_conf, lock_targets=targets)
+        return new_state
