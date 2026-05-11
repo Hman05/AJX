@@ -98,7 +98,7 @@ class CableParameters(ParameterNode):
     damping: float
 
     def get_stiffness(self, radius, segment_length):
-        area = radius * 2 * jnp.pi
+        area = (radius ** 2) * jnp.pi
         area_moment = jnp.pi * radius**4 / 4
         polar_moment = jnp.pi * radius**4 / 2
 
