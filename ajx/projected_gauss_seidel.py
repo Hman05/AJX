@@ -94,22 +94,32 @@ def projected_gauss_seidel_sparse(
     lbda_lower_limits = lbda_limits[0,:]
     lbda_upper_limits = lbda_limits[1,:]
 
-    #jax.profiler.start_trace("/tmp/profile-data")
-
     schur_block_diag_inv = get_inverse_schur_block_diagonal_elements(G, M_inv, Sigma)
     group_row_offsets = get_group_row_offsets(
         G
     )  # Row offset for each group in the actual dense matrix G
+
+    # To cache precomputed data. It is unclear though if it improves performance.
+    cache_data = []
+    for _, group_data in G.row_groups:
+        local_data = {"row_size": group_data.row_size,
+                      "col_sizes": group_data.col_sizes,
+                      "col_offsets": jnp.array(group_data.col_offsets),
+                      "col_sq_offsets": jnp.array(group_data.col_sq_offsets),
+                      }
+        cache_data.append(local_data)
+    cache_data = tuple(cache_data)
     
     def constraint_body(group_index, j, group, state):
         """
         This routine is intended to calculate one PGS-iteration per constraint
         """
         u, lbda = state
-        group_col_offsets = jnp.array(group.col_offsets)
-        group_col_sq_offsets = jnp.array(group.col_sq_offsets)
-        group_row_size = group.row_size
-        group_col_sizes = group.col_sizes
+        group_cache_data = cache_data[group_index]
+        group_col_offsets = group_cache_data["col_offsets"]
+        group_col_sq_offsets = group_cache_data["col_sq_offsets"]
+        group_row_size = group_cache_data["row_size"]
+        group_col_sizes = group_cache_data["col_sizes"]
 
         # Indexing the rows of the jth block in group
         row_start = (
@@ -164,9 +174,6 @@ def projected_gauss_seidel_sparse(
     # This is the entry point for the PGS-solver
     u, lbda = jax.lax.fori_loop(0, Nit, pgs_body, (u, lbda))
 
-    #jax.block_until_ready(u)
-    #jax.block_until_ready(lbda)
-    #jax.profiler.stop_trace()
     return u, lbda
 
 
