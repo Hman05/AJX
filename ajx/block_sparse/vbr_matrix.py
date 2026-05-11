@@ -312,6 +312,31 @@ class VBRMatrix(BlockMatrixBase):
                 slice_begin = slice_end
 
         return res
+    
+    def grouped_vector_mul(self, vec):
+        res = jnp.zeros(sum(self.col_sizes))
+        row_groups = self.row_groups
+        group_vec_slice_begin = 0
+
+        for num_blocks_rows, group in row_groups:
+            row_size = group.row_size
+            col_sizes = group.col_sizes
+            col_offsets = group.col_offsets
+
+            def vector_mul_block_row(j, res):
+                vec_slice_begin = group_vec_slice_begin + j*row_size
+                vec_slice = jax.lax.dynamic_slice(vec, (vec_slice_begin,), (row_size,))
+                mat = self.get_row_from_group(group.offset, j, row_size, col_sizes)
+                for k, local_res in enumerate([vec_slice @ A for A in mat]):
+                    idx = jnp.array(col_offsets)[j, k]
+                    old = jax.lax.dynamic_slice(res, (idx,), (local_res.shape[0],))
+                    res = jax.lax.dynamic_update_slice(res, old + local_res, (idx,))
+                return res
+            
+            res = jax.lax.fori_loop(0, num_blocks_rows, vector_mul_block_row, res)
+            group_vec_slice_begin += num_blocks_rows*row_size
+        return res
+
 
     def plot(self):
         import matplotlib.pyplot as plt
