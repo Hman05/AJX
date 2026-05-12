@@ -43,7 +43,7 @@ if __name__ == "__main__":
             loose_end=False,
         ),
         target_pos=target_pos,
-        target_vel=jnp.array([2.0, 0.0, 2.0, 0.0, 0.0, 0.0]),
+        target_vel=target_vel,
         bin_pos=bin_pos,
     )
     env.camera_pos = jnp.array([0.5, -3.0, 0.0])
@@ -134,8 +134,17 @@ if __name__ == "__main__":
             (initial_state, residuals0),
         )
         all_residuals.append(residuals)
-        all_residuals.append(state.gvel.data[-1] - target_vel)
+
+        # 'state' is of type DLOState, and contains information on this
+        # gvel is the generalized velocity, it has shape [:, 6]
+        # The velocity for the object is the last entry (hence -1)
+        # and use only the linear velocity (first 3 components)
+        all_residuals.append(state.gvel.data[-1, :3] - target_vel)
+        # Likewise we use only the position (and not the rotation)
         all_residuals.append(state.conf.pos[-1, :3] - target_pos)
+
+        # For stability, it might be an idea to introduce a regularization
+        # Here we add a residual term to dampen the control signals
         regularization = u * 0.01
         all_residuals.append(regularization)
         return jnp.concatenate(all_residuals, axis=None)
