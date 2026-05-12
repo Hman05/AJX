@@ -51,6 +51,86 @@ def rotation_matrix(quat: jax.Array) -> jax.Array:
     )
 
 
+def matrix_to_quaternion(R: jax.Array) -> jax.Array:
+    """
+    Convert a 3x3 rotation matrix to quaternion [w, x, y, z].
+    Assumes R is a proper rotation matrix.
+    """
+    trace = jnp.trace(R)
+
+    def case_trace_positive():
+        s = jnp.sqrt(trace + 1.0) * 2.0
+        w = 0.25 * s
+        x = (R[2, 1] - R[1, 2]) / s
+        y = (R[0, 2] - R[2, 0]) / s
+        z = (R[1, 0] - R[0, 1]) / s
+        return jnp.array([w, x, y, z])
+
+    def case_0():
+        s = jnp.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2]) * 2.0
+        w = (R[2, 1] - R[1, 2]) / s
+        x = 0.25 * s
+        y = (R[0, 1] + R[1, 0]) / s
+        z = (R[0, 2] + R[2, 0]) / s
+        return jnp.array([w, x, y, z])
+
+    def case_1():
+        s = jnp.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2]) * 2.0
+        w = (R[0, 2] - R[2, 0]) / s
+        x = (R[0, 1] + R[1, 0]) / s
+        y = 0.25 * s
+        z = (R[1, 2] + R[2, 1]) / s
+        return jnp.array([w, x, y, z])
+
+    def case_2():
+        s = jnp.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1]) * 2.0
+        w = (R[1, 0] - R[0, 1]) / s
+        x = (R[0, 2] + R[2, 0]) / s
+        y = (R[1, 2] + R[2, 1]) / s
+        z = 0.25 * s
+        return jnp.array([w, x, y, z])
+
+    return jnp.where(
+        trace > 0,
+        case_trace_positive(),
+        jnp.where(
+            (R[0, 0] > R[1, 1]) & (R[0, 0] > R[2, 2]),
+            case_0(),
+            jnp.where(
+                R[1, 1] > R[2, 2],
+                case_1(),
+                case_2(),
+            ),
+        ),
+    )
+
+
+def make_rotation_matrix(xp: jax.Array) -> jax.Array:
+    """
+    Construct rotation matrix whose first column is xp.
+    xp must be unit length.
+    """
+    xp = xp / jnp.linalg.norm(xp)
+
+    # Choose helper vector not parallel to xp
+    helper = jnp.array([1.0, 0.0, 0.0])
+
+    if jnp.abs(jnp.dot(helper, xp)) > 0.9:
+        helper = jnp.array([0.0, 1.0, 0.0])
+
+    # Gram-Schmidt
+    yp = helper - jnp.dot(helper, xp) * xp
+    yp = yp / jnp.linalg.norm(yp)
+
+    # Right-handed frame
+    zp = jnp.cross(xp, yp)
+
+    # Columns are basis vectors
+    R = jnp.column_stack([xp, yp, zp])
+
+    return R
+
+
 def conjugate(quat: jax.Array) -> jax.Array:
     """
     Get the quaternion conjugate
