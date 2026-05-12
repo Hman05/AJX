@@ -1,8 +1,5 @@
 import jax
 
-jax.config.update("jax_enable_x64", True)
-# jax.config.update("jax_disable_jit", True)
-
 from ajx.example_graphics.environment_scene import EnvironmentScene
 from ajx.example_graphics.application import Application
 from ajx.example_environments.dlo_scoop import (
@@ -15,6 +12,11 @@ import jax.numpy as jnp
 import ajx.math as math
 from ajx import Transform
 from ajx.tree_util import tangent_jacfwd
+
+# Enable float64 support globally (must be done early).
+jax.config.update("jax_enable_x64", True)
+# jax.config.update("jax_disable_jit", True)
+
 
 if __name__ == "__main__":
     timestep = 0.016667
