@@ -83,12 +83,24 @@ if __name__ == "__main__":
         return jnp.max(jnp.array([0.0, x]))
 
     def coulomb_limit_penalty(state):
+        """
+        Return residual penalties for violating the contact friction model.
+        """
+        # The last six multipliers correspond to the cylinder lock contact.
         cylinder_lock_mul = state.multipliers[-6:]
-        lambda_n = cylinder_lock_mul[2]
+        # Extract the normal force and the 2D tangential force components.
         lambda_t = cylinder_lock_mul[:2]
+        lambda_n = cylinder_lock_mul[2]
+
+        # Penalize excessive tangential force relative to the allowed
+        # friction cone defined by the stricter friction coefficient.
         lambda_t_norm = jnp.linalg.norm(lambda_t)
         coulomb_residual = 1e3 * relu(lambda_t_norm + mu_strict * lambda_n)
+
+        # Also penalize positive normal multiplier values so the optimizer
+        # prefers the expected sign convention for the contact constraint.
         positive_normal_residual = 1e3 * relu(lambda_n)
+
         return jnp.concatenate([coulomb_residual, positive_normal_residual], axis=None)
 
     def get_robot_power(state):
