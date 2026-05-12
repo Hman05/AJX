@@ -226,8 +226,8 @@ if __name__ == "__main__":
 
     control_signal = AJXArray(jnp.ones([horizon, 12]))
 
-    solution, Js = gauss_newton(control_signal, n_iter=10, damping=1e-8)
-    solution, Js = levenberg_marquardt(solution, n_iter=50, damping=1e-4)
+    solution, Js = gauss_newton(control_signal, n_iter=5, damping=1e-8)
+    solution, Js = levenberg_marquardt(solution, n_iter=5, damping=1e-4)
 
     import imageio
     from IPython.display import Video
