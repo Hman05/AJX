@@ -37,7 +37,7 @@ if __name__ == "__main__":
     # The resultant target-velocity (at target-position) is then
     target_vel = (bin_pos - target_pos) / flight_time - 0.5 * g * flight_time
 
-
+    # Setup environment
     env = DLOScoop(
         sim_settings=SimulationSettings(timestep, True, Solver.DENSE_LINEAR),
         env_settings=DLOSettings.create(
@@ -55,9 +55,12 @@ if __name__ == "__main__":
         target_vel=target_vel,
         bin_pos=bin_pos,
     )
+
+    # Setup camera
     env.camera_pos = jnp.array([0.5, -3.0, 0.0])
     env.camera_rot = math.quat_from_axis_angle(jnp.array([0.0, 0.0, 1.0]), 0.0)
 
+    # Change environement cable parameters
     nu = 0.333
     E = 3e8
     cable_param = CableParameters(
