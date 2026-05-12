@@ -22,10 +22,14 @@ if __name__ == "__main__":
     timestep = 0.016667
     grippermc_to_marker = jnp.array([0.0478024, 0, 0])
 
+    # Setup parameters
+    coulomb_penalty_weight = 1e3
+    target_velocity_weight = 1
+    target_position_weight = 1
+    control_regularization_weight = 0.01
     # Test to optimize path with more strict friction settings
     mu = 0.5
     mu_strict = 0.4
-    coulomb_penalty_weight = 1e3
 
     # Set target-position, from which an object should continue in a trajectory
     # and end up in a bin, at bin-position.
@@ -168,13 +172,13 @@ if __name__ == "__main__":
         # gvel is the generalized velocity, it has shape [:, 6]
         # The velocity for the object is the last entry (hence -1)
         # and use only the linear velocity (first 3 components)
-        all_residuals.append(state.gvel.data[-1, :3] - target_vel)
+        all_residuals.append(target_velocity_weight * (state.gvel.data[-1, :3] - target_vel))
         # Likewise we use only the position (and not the rotation)
-        all_residuals.append(state.conf.pos[-1, :3] - target_pos)
+        all_residuals.append(target_position_weight * (state.conf.pos[-1, :3] - target_pos))
 
         # For stability, it might be an idea to introduce a regularization
         # Here we add a residual term to dampen the control signals
-        regularization = u * 0.01
+        regularization = u * control_regularization_weight
         all_residuals.append(regularization)
         return jnp.concatenate(all_residuals, axis=None)
 
