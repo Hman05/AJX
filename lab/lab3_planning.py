@@ -111,13 +111,18 @@ if __name__ == "__main__":
         return jnp.concatenate([coulomb_residual, positive_normal_residual], axis=None)
 
     def get_robot_power(state):
+        """Estimate the total mechanical power produced by the robot joints."""
+        # There are three constraint for yaw-pitch-roll control.
         link_multipliers = state.multipliers.reshape(-1, 6)[:3]
 
+        # Select the active joint components for the three link constraints.
         pos_yaw_degrees = jnp.array([0, 1, 2, 5])
         hinge_degree = jnp.array([5])
         pos_yaw_mulitpliers = link_multipliers[0, pos_yaw_degrees]
         pitch_multipliers = link_multipliers[1, hinge_degree]
         roll_multipliers = link_multipliers[2, hinge_degree]
+
+        # Map the constraint multipliers into generalized forces at each joint.
         G1 = env.lock_world_to_hidden1a.object_jacobian(state, env_param)
         f1 = G1.reshape(6, 6)[pos_yaw_degrees].T @ pos_yaw_mulitpliers / timestep
         G2 = env.lock_hidden1a_to_hidden2a.object_jacobian(state, env_param)
@@ -125,9 +130,10 @@ if __name__ == "__main__":
         f2 = G2_prime @ pitch_multipliers / timestep
         G3 = env.lock_hidden2a_to_gripper1.object_jacobian(state, env_param)
         G3_prime = G3.reshape(2, 6, 6)[:, hinge_degree].transpose(0, 2, 1)
-        # p = h*f =>
+        # Convert impulse-like quantities to forces using the timestep.
         f3 = G3_prime @ roll_multipliers / timestep
 
+        # Power is force/torque dotted with the corresponding generalized velocity.
         P1 = jnp.dot(f1, state.gvel.data[0])
         P2_1 = jnp.dot(f2[0], state.gvel.data[0])
         P2_2 = jnp.dot(f2[1], state.gvel.data[1])
