@@ -79,11 +79,11 @@ if __name__ == "__main__":
 
     def coulomb_limit_penalty(state):
         cylinder_lock_mul = state.multipliers[-6:]
-        lambda_n = -cylinder_lock_mul[2]
+        lambda_n = cylinder_lock_mul[2]
         lambda_t = cylinder_lock_mul[:2]
         lambda_t_norm = jnp.linalg.norm(lambda_t)
-        coulomb_residual = 1e3 * relu(lambda_t_norm - mu_strict * lambda_n)
-        positive_normal_residual = 1e3 * relu(-lambda_n)
+        coulomb_residual = 1e3 * relu(lambda_t_norm + mu_strict * lambda_n)
+        positive_normal_residual = 1e3 * relu(lambda_n)
         return jnp.concatenate([coulomb_residual, positive_normal_residual], axis=None)
 
     def get_robot_power(state):
