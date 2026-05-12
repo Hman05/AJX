@@ -74,8 +74,6 @@ if __name__ == "__main__":
     )
 
     initial_state = env.get_neutral_state(env_param)
-    target_pos = env.target_pos
-    target_vel = env.target_vel
     horizon = 60
 
     def softplus(beta, x):
