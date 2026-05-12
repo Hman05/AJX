@@ -48,7 +48,7 @@ if __name__ == "__main__":
             loose_end=False,
         ),
         target_pos=target_pos,
-        target_vel=target_vel,
+        target_vel=jnp.array([2.0, 0.0, 2.0, 0.0, 0.0, 0.0]),
         bin_pos=bin_pos,
     )
     env.camera_pos = jnp.array([0.5, -3.0, 0.0])
