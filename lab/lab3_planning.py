@@ -125,12 +125,50 @@ if __name__ == "__main__":
         roll_multipliers = link_multipliers[2, hinge_degree]
 
         # Map the constraint multipliers into generalized forces at each joint.
-        G1 = env.lock_world_to_hidden1a.object_jacobian(state, env_param)
+        body_ids1 = (
+            env_param.rigid_body_param.names.index(env.lock_world_to_hidden1a.body),
+        )
+        constraint_ids1 = (
+            env_param.constraint_param.names.index(env.lock_world_to_hidden1a.name),
+        )
+        G1 = env.lock_world_to_hidden1a.__class__.jacobian(
+            env_param,
+            state,
+            body_ids1,
+            constraint_ids1,
+            env.lock_world_to_hidden1a.constraint_type,
+        )
         f1 = G1.reshape(6, 6)[pos_yaw_degrees].T @ pos_yaw_mulitpliers / timestep
-        G2 = env.lock_hidden1a_to_hidden2a.object_jacobian(state, env_param)
+        body_ids2 = tuple(
+            env_param.rigid_body_param.names.index(body)
+            for body in env.lock_hidden1a_to_hidden2a.bodies
+        )
+        constraint_ids2 = (
+            env_param.constraint_param.names.index(env.lock_hidden1a_to_hidden2a.name),
+        )
+        G2 = env.lock_hidden1a_to_hidden2a.__class__.jacobian(
+            env_param,
+            state,
+            body_ids2,
+            constraint_ids2,
+            env.lock_hidden1a_to_hidden2a.constraint_type,
+        )
         G2_prime = G2.reshape(2, 6, 6)[:, hinge_degree].transpose(0, 2, 1)
         f2 = G2_prime @ pitch_multipliers / timestep
-        G3 = env.lock_hidden2a_to_gripper1.object_jacobian(state, env_param)
+        body_ids3 = tuple(
+            env_param.rigid_body_param.names.index(body)
+            for body in env.lock_hidden2a_to_gripper1.bodies
+        )
+        constraint_ids3 = (
+            env_param.constraint_param.names.index(env.lock_hidden2a_to_gripper1.name),
+        )
+        G3 = env.lock_hidden2a_to_gripper1.__class__.jacobian(
+            env_param,
+            state,
+            body_ids3,
+            constraint_ids3,
+            env.lock_hidden2a_to_gripper1.constraint_type,
+        )
         G3_prime = G3.reshape(2, 6, 6)[:, hinge_degree].transpose(0, 2, 1)
         # Convert impulse-like quantities to forces using the timestep.
         f3 = G3_prime @ roll_multipliers / timestep
