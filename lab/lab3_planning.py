@@ -27,7 +27,7 @@ if __name__ == "__main__":
     bin_pos = jnp.array([0.8, 0.0, -0.1])
     flight_time = 0.25
     g = jnp.array([0.0, 0.0, -9.82])
-    target_vel = (target_pos - bin_pos) / flight_time - 0.5 * g * flight_time
+    target_vel = (bin_pos - target_pos) / flight_time - 0.5 * g * flight_time
 
     env = DLOScoop(
         sim_settings=SimulationSettings(timestep, True, Solver.DENSE_LINEAR),
