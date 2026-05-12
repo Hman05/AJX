@@ -22,15 +22,21 @@ if __name__ == "__main__":
     timestep = 0.016667
     grippermc_to_marker = jnp.array([0.0478024, 0, 0])
 
+    # Test to optimize path with more strict friction settings
     mu = 0.5
     mu_strict = 0.4
 
+    # Set target-position, from which an object should continue in a trajectory
+    # and end up in a bin, at bin-position.
     target_pos = jnp.array([0.3, 0.0, 0.3])
     bin_pos = jnp.array([0.8, 0.0, -0.1])
+
+    # We parameterize the trajectory with a flight-time (s)
     flight_time = 0.5
     g = jnp.array([0.0, 0.0, -9.82])
+    # The resultant target-velocity (at target-position) is then
     target_vel = (bin_pos - target_pos) / flight_time - 0.5 * g * flight_time
-    print(f"target_vel:{target_vel}")
+
 
     env = DLOScoop(
         sim_settings=SimulationSettings(timestep, True, Solver.DENSE_LINEAR),
