@@ -27,6 +27,8 @@ if __name__ == "__main__":
     target_velocity_weight = 1
     target_position_weight = 1
     control_regularization_weight = 0.01
+    power_penalty_weight = 1
+    power_max = 1
     # Test to optimize path with more strict friction settings
     mu = 0.5
     mu_strict = 0.4
@@ -142,6 +144,11 @@ if __name__ == "__main__":
         P3_2 = jnp.dot(f3[1], state.gvel.data[2])
         return P1 + P2_1 + P2_2 + P3_1 + P3_2
 
+    def power_limit_residual(state, max_power, penalty_weight):
+        """Return a penalty when robot power exceeds the configured limit."""
+        total_power = get_robot_power(state)
+        return penalty_weight * relu(total_power - max_power)
+
     @jax.jit
     def residuals(control_signal):
         u = control_signal.data
@@ -158,13 +165,19 @@ if __name__ == "__main__":
                 friction_coefficient=mu_strict,
                 penalty_weight=coulomb_penalty_weight,
             )
+            power_residual = power_limit_residual(
+                state,
+                max_power=power_max,
+                penalty_weight=power_penalty_weight,
+            )
+            residual = jnp.concatenate([residual, jnp.atleast_1d(power_residual)])
 
             residuals = residuals.at[i].set(residual)
 
             return state, residuals
 
         # Adjust shape depending on residual shape
-        residuals0 = jnp.zeros((horizon, 2))
+        residuals0 = jnp.zeros((horizon, 3))
 
         state, residuals = jax.lax.fori_loop(
             0,
