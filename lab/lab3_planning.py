@@ -236,7 +236,8 @@ if __name__ == "__main__":
 
     control_signal = AJXArray(jnp.ones([horizon, 12]))
 
-    solution, Js = gauss_newton(control_signal, n_iter=10, damping=1e-8)
+    # solution, Js = gauss_newton(control_signal, n_iter=15, damping=1e-8)
+    solution = control_signal
     solution, Js = levenberg_marquardt(solution, n_iter=15, damping=1e-4)
 
     import imageio
