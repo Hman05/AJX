@@ -25,6 +25,7 @@ if __name__ == "__main__":
     # Test to optimize path with more strict friction settings
     mu = 0.5
     mu_strict = 0.4
+    coulomb_penalty_weight = 1e3
 
     # Set target-position, from which an object should continue in a trajectory
     # and end up in a bin, at bin-position.
@@ -82,7 +83,7 @@ if __name__ == "__main__":
     def relu(x):
         return jnp.max(jnp.array([0.0, x]))
 
-    def coulomb_limit_penalty(state):
+    def coulomb_limit_penalty(state, friction_coefficient, penalty_weight):
         """
         Return residual penalties for violating the contact friction model.
         """
@@ -93,13 +94,15 @@ if __name__ == "__main__":
         lambda_n = cylinder_lock_mul[2]
 
         # Penalize excessive tangential force relative to the allowed
-        # friction cone defined by the stricter friction coefficient.
+        # friction cone defined by the supplied friction coefficient.
         lambda_t_norm = jnp.linalg.norm(lambda_t)
-        coulomb_residual = 1e3 * relu(lambda_t_norm + mu_strict * lambda_n)
+        coulomb_residual = penalty_weight * relu(
+            lambda_t_norm + friction_coefficient * lambda_n
+        )
 
         # Also penalize positive normal multiplier values so the optimizer
         # prefers the expected sign convention for the contact constraint.
-        positive_normal_residual = 1e3 * relu(lambda_n)
+        positive_normal_residual = penalty_weight * relu(lambda_n)
 
         return jnp.concatenate([coulomb_residual, positive_normal_residual], axis=None)
 
@@ -140,7 +143,11 @@ if __name__ == "__main__":
 
             state = env.step_state(state, u[i], env_param)
 
-            residual = coulomb_limit_penalty(state)
+            residual = coulomb_limit_penalty(
+                state,
+                friction_coefficient=mu_strict,
+                penalty_weight=coulomb_penalty_weight,
+            )
 
             residuals = residuals.at[i].set(residual)
 
