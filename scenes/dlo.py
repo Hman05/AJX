@@ -29,7 +29,8 @@ if __name__ == "__main__":
         env_settings=DLOSettings.create(
             n_segments=n_segments,
             length=0.6,
-            radius=0.016,
+            outer_radius=0.015,
+            inner_radius=0.013,
             density=1000,
             pose_estimate_linear_offsets=marker_offsets,
             gripper1_offset=Transform(grippermc_to_marker, math.Rotations.unitary),
@@ -38,15 +39,12 @@ if __name__ == "__main__":
         ),
     )
 
-    nu = 0.333
-    E = 1e7
+    E = 8e6
+    G = 4e6
     cable_param = CableParameters(
         youngs_modulus=E,
-        shear_modulus=E / (2 * (1 + nu)),
+        shear_modulus=G,
         damping=environment.default_param.sparse_param.cable_param.damping,
-    )
-    stiffness = cable_param.get_stiffness(
-        0.016, environment.env_settings.segment_halflength * 2
     )
 
     env_param = environment.default_param.tree_replace(
