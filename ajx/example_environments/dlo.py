@@ -14,7 +14,8 @@ from ajx import Transform
 class DLOSettings:
     n_segments: int
     segment_halflength: float
-    radius: float
+    outer_radius: float
+    inner_radius: float
     constraint_type: ConstraintType
     density: float
     pose_estimate_bodies: List[str] = ()
@@ -26,7 +27,8 @@ class DLOSettings:
     def create(
         n_segments: int,
         length: float,
-        radius: float,
+        outer_radius: float,
+        inner_radius: float,
         density: float,
         pose_estimate_linear_offsets: List[float],
         gripper1_offset: Transform,
@@ -42,7 +44,6 @@ class DLOSettings:
         pose_estimate_bodies.append("grip_tool1")
         pose_estimate_offsets.append(gripper1_offset)
         pose_estimate_constraints_a.append("lock_gripper1_to_dlo")
-        # pose_estimate_constraints_b.append("lock_hidden2a_to_gripper1")
 
         unit_transform = Transform(
             jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
@@ -63,12 +64,12 @@ class DLOSettings:
 
         pose_estimate_bodies.append("grip_tool2")
         pose_estimate_offsets.append(gripper2_offset)
-        # pose_estimate_constraints_a.append("lock_gripper2_to_hidden2b")
         pose_estimate_constraints_b.append("lock_dlo_to_gripper2")
         return DLOSettings(
             n_segments,
             0.5 * segment_length,
-            radius,
+            outer_radius,
+            inner_radius,
             ConstraintType.BEND_TWIST.value,
             density,
             pose_estimate_bodies,
@@ -84,7 +85,7 @@ class DLOState(ParameterNode):
     conf: Configuration
     gvel: GeneralizedVelocity
     lock_targets: jax.Array
-    multipliers: jax.Array = struct.field(default_factory=lambda: jnp.zeros([0]))
+    multipliers: jax.Array
 
     tangent_restrictions: Tuple[str, ...] = struct.field(
         pytree_node=False, default=tuple(["conf", "gvel", "lock_targets"])
@@ -97,10 +98,10 @@ class CableParameters(ParameterNode):
     shear_modulus: float
     damping: float
 
-    def get_stiffness(self, radius, segment_length):
-        area = radius * 2 * jnp.pi
-        area_moment = jnp.pi * radius**4 / 4
-        polar_moment = jnp.pi * radius**4 / 2
+    def get_stiffness(self, inner_radius, outer_radius, segment_length):
+        area = jnp.pi * (outer_radius**2 - inner_radius**2)
+        area_moment = jnp.pi * (outer_radius**4 - inner_radius**4) / 4
+        polar_moment = jnp.pi * (outer_radius**4 - inner_radius**4) / 2
 
         E = self.youngs_modulus
         G = self.shear_modulus
@@ -108,7 +109,9 @@ class CableParameters(ParameterNode):
         stretch_stiffness = E * area / segment_length
         bend_stiffness = E * area_moment / segment_length
         twist_stiffness = G * polar_moment / segment_length
-        return stretch_stiffness, bend_stiffness, twist_stiffness
+        timoshenko_shear_coefficient = 0.857
+        shear_stiffness = G * area / segment_length * timoshenko_shear_coefficient
+        return stretch_stiffness, bend_stiffness, twist_stiffness, shear_stiffness
 
 
 DLOSparseParam = create_parameter_node("DLOSparseParam", ("cable_param",))
@@ -121,7 +124,9 @@ class CoupleAsCable(PreStepModifier):
     body_offset: float
     n_segments: float
     segment_length: jax.Array
-    radius: jax.Array
+    r_outer: jax.Array
+    r_inner: jax.Array
+    model_shear_deformation: bool = True
 
     def update_params(self, state: DLOState, u: jax.Array, param: SimulationParameters):
         cable_param: CableParameters = param.sparse_param.cable_param
@@ -130,9 +135,9 @@ class CoupleAsCable(PreStepModifier):
         slice_end = self.constraint_offset + n_constraints
         constraint_param = param.constraint_param
 
-        area = self.radius * 2 * jnp.pi
-        area_moment = jnp.pi * self.radius**4 / 4
-        polar_moment = jnp.pi * self.radius**4 / 2
+        area = jnp.pi * (self.r_outer**2 - self.r_inner**2)
+        area_moment = jnp.pi * (self.r_outer**4 - self.r_inner**4) / 4
+        polar_moment = jnp.pi * (self.r_outer**4 - self.r_inner**4) / 2
 
         E = cable_param.youngs_modulus
         G = cable_param.shear_modulus
@@ -140,7 +145,13 @@ class CoupleAsCable(PreStepModifier):
         stretch_stiffness = E * area / self.segment_length
         bend_stiffness = E * area_moment / self.segment_length
         twist_stiffness = G * polar_moment / self.segment_length
-        shear_stiffness = 1e6  # G * area / self.segment_length
+        shear_stiffness = 1e9
+
+        if self.model_shear_deformation:
+            timoshenko_shear_coefficient = 0.857
+            shear_stiffness = (
+                G * area / self.segment_length * timoshenko_shear_coefficient
+            )
 
         stiffness = jnp.array(
             [
@@ -292,9 +303,9 @@ class DLO(Environment):
             capsule_path,
             rotation=math.Rotations.y_to_x,
             scale=(
-                self.env_settings.radius,
+                self.env_settings.outer_radius,
                 self.env_settings.segment_halflength,
-                self.env_settings.radius,
+                self.env_settings.outer_radius,
             ),
             color=(0.1, 0.1, 0.5),
         )
@@ -303,9 +314,9 @@ class DLO(Environment):
             hex_wireframe_path,
             rotation=math.Rotations.y_to_x,
             scale=(
-                self.env_settings.radius,
+                self.env_settings.outer_radius,
                 self.env_settings.segment_halflength,
-                self.env_settings.radius,
+                self.env_settings.outer_radius,
             ),
             color=(0.0, 0.0, 0.0),
         )
@@ -445,26 +456,16 @@ class DLO(Environment):
                     ("marker_model", Transform.unitary()),
                     ("segment_wireframe_model", Transform.unitary()),
                 ]
-
-            area = jnp.pi * (self.env_settings.radius) ** 2
+            r_o = self.env_settings.outer_radius
+            r_i = self.env_settings.inner_radius
+            length = 2 * self.env_settings.segment_halflength
+            area = jnp.pi * (r_o**2 - r_i**2)
             # Cylinder mass
-            mass_cyl = (
-                self.env_settings.density
-                * area
-                * self.env_settings.segment_halflength
-                * 2
-            )
+            mass_cyl = self.env_settings.density * area * length * 2
             mass = mass_cyl
-            inertia_cyl_x = 0.5 * mass * self.env_settings.radius**2
-            inertia_cyl_yz = (
-                1
-                / 12
-                * mass
-                * (
-                    3 * self.env_settings.radius**2
-                    + (self.env_settings.segment_halflength * 2) ** 2
-                )
-            )
+            inertia_cyl_x = 0.5 * mass * (r_o**2 + r_i**2)
+
+            inertia_cyl_yz = (1.0 / 12.0) * mass * (3 * (r_o**2 + r_i**2) + length**2)
             inertia = jnp.array([inertia_cyl_x, inertia_cyl_yz, inertia_cyl_yz])
 
             arms.append(RigidBody(f"body{i}", segment_geometry, debug_geometry))
@@ -489,8 +490,8 @@ class DLO(Environment):
             frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_z),
             compliance_lin=1e-8,
             compliance_rot=1e-8,
-            viscous_compliance_lin=1e-3,
-            viscous_compliance_rot=1e-2,
+            viscous_compliance_lin=1e-2,
+            viscous_compliance_rot=1e-1,
             damping=2 * self.reference_timestep,
             offset=0.0,
             name="lock_world_to_hidden1a",
@@ -501,11 +502,13 @@ class DLO(Environment):
             body_b=f"hidden_link2a",
             constraint_type=ConstraintType.HINGE.value,
         )
-        lock_hidden1a_to_hidden2a_param = ConstraintParameters.create_locked(
+        lock_hidden1a_to_hidden2a_param = ConstraintParameters.create_locked_ext(
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_y),
             frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_y),
-            compliance=1e-8,
-            viscous_compliance=1e-5,
+            compliance_lin=1e-8,
+            compliance_rot=1e-8,
+            viscous_compliance_lin=1e-2,
+            viscous_compliance_rot=1e-1,
             damping=2 * self.reference_timestep,
             offset=0.0,
             name=f"lock_hidden1a_to_hidden2a",
@@ -516,11 +519,13 @@ class DLO(Environment):
             body_b=f"grip_tool1",
             constraint_type=ConstraintType.HINGE.value,
         )
-        lock_hidden2a_to_gripper1_param = ConstraintParameters.create_locked(
+        lock_hidden2a_to_gripper1_param = ConstraintParameters.create_locked_ext(
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.unitary),
             frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.unitary),
-            compliance=1e-8,
-            viscous_compliance=1e-5,
+            compliance_lin=1e-8,
+            compliance_rot=1e-8,
+            viscous_compliance_lin=1e-2,
+            viscous_compliance_rot=1e-1,
             damping=2 * self.reference_timestep,
             offset=0.0,
             name=f"lock_hidden2a_to_gripper1",
@@ -599,11 +604,13 @@ class DLO(Environment):
             body_b=f"hidden_link2b",
             constraint_type=ConstraintType.HINGE.value,
         )
-        lock_gripper2_to_hidden_link2b_param = ConstraintParameters.create_locked(
+        lock_gripper2_to_hidden_link2b_param = ConstraintParameters.create_locked_ext(
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.unitary),
             frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.unitary),
-            compliance=1e-8,
-            viscous_compliance=1e-5,
+            compliance_lin=1e-8,
+            compliance_rot=1e-8,
+            viscous_compliance_lin=1e-2,
+            viscous_compliance_rot=1e-1,
             damping=2 * self.reference_timestep,
             offset=0.0,
             name=f"lock_gripper2_to_hidden2b",
@@ -614,11 +621,13 @@ class DLO(Environment):
             body_b=f"hidden_link1b",
             constraint_type=ConstraintType.HINGE.value,
         )
-        lock_hidden2b_to_hidden1b_param = ConstraintParameters.create_locked(
+        lock_hidden2b_to_hidden1b_param = ConstraintParameters.create_locked_ext(
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_y),
             frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_y),
-            compliance=1e-8,
-            viscous_compliance=1e-5,
+            compliance_lin=1e-8,
+            compliance_rot=1e-8,
+            viscous_compliance_lin=1e-2,
+            viscous_compliance_rot=1e-1,
             damping=2 * self.reference_timestep,
             offset=0.0,
             name=f"lock_hidden2b_to_hidden1b",
@@ -644,8 +653,8 @@ class DLO(Environment):
             frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_z),
             compliance_lin=1e-8,
             compliance_rot=1e-8,
-            viscous_compliance_lin=1e-3,
-            viscous_compliance_rot=1e-2,
+            viscous_compliance_lin=1e-2,
+            viscous_compliance_rot=1e-1,
             damping=2 * self.reference_timestep,
             offset=0.0,
             name="lock_hidden1b_to_world",
@@ -734,7 +743,8 @@ class DLO(Environment):
             body_offset=rb_param.names.index("body0"),
             n_segments=self.env_settings.n_segments,
             segment_length=self.env_settings.segment_halflength * 2,
-            radius=self.env_settings.radius,
+            r_outer=self.env_settings.outer_radius,
+            r_inner=self.env_settings.inner_radius,
         )
 
         pre_step_modifiers = (
@@ -855,8 +865,6 @@ class DLO(Environment):
         )
         targets = jnp.zeros([12]).at[6:9].set(gripper2_pos)
         targets = targets.at[0:3].set(gripper1_pos)
-
-        # When using the PGS-solver with warm starting, multiplier size needs to be correctly specified for jax.jit compilation to work
         multipliers_size = self.get_multiplier_size()
         multipliers = jnp.zeros([multipliers_size])
 
@@ -986,7 +994,7 @@ class DLO(Environment):
         # Frame A
         # cs = interp1d(
         #     off0a_p, transforms[0].pos, kind="linear", axis=0
-        # )  # axis=0 if fp is (N, ...)
+        # )
         cs = CubicSpline(off0a_p, transforms[0].pos)
         new_pos_a = cs(off0a)
         new_rot_a = math.quat_interp(off0a, off0a_p, transforms[0].rot)
@@ -1001,7 +1009,7 @@ class DLO(Environment):
         # Frame B
         # cs = interp1d(
         #     off0b_p, transforms[1].pos, kind="linear", axis=0
-        # )  # axis=0 if fp is (N, ...)
+        # )
         cs = CubicSpline(off0b_p, transforms[1].pos)
         new_pos_b = cs(off0b)
         new_rot_b = math.quat_interp(off0b, off0b_p, transforms[1].rot)

@@ -41,18 +41,12 @@ class ExperimentConfig:
     friction_coefficient_constraint: float = 0.4
 
     flight_time: float = 0.5
-    gravity: jax.Array = field(
-        default_factory=lambda: jnp.array([0.0, 0.0, -9.82])
-    )
+    gravity: jax.Array = field(default_factory=lambda: jnp.array([0.0, 0.0, -9.82]))
     grippermc_to_marker: jax.Array = field(
         default_factory=lambda: jnp.array([0.0478024, 0.0, 0.0])
     )
-    target_pos: jax.Array = field(
-        default_factory=lambda: jnp.array([0.3, 0.0, 0.3])
-    )
-    bin_pos: jax.Array = field(
-        default_factory=lambda: jnp.array([0.8, 0.0, -0.1])
-    )
+    target_pos: jax.Array = field(default_factory=lambda: jnp.array([0.3, 0.0, 0.3]))
+    bin_pos: jax.Array = field(default_factory=lambda: jnp.array([0.8, 0.0, -0.1]))
 
     nu: float = 0.333
     youngs_modulus: float = 3e8
@@ -79,17 +73,14 @@ def relu(x):
 
 def compute_target_velocity(config: ExperimentConfig):
     return (
-        (config.bin_pos - config.target_pos) / config.flight_time
-        - 0.5 * config.gravity * config.flight_time
-    )
+        config.bin_pos - config.target_pos
+    ) / config.flight_time - 0.5 * config.gravity * config.flight_time
 
 
 def build_environment(config: ExperimentConfig):
     target_vel = compute_target_velocity(config)
     env = DLOScoop(
-        sim_settings=SimulationSettings(
-            config.timestep, True, Solver.DENSE_LINEAR
-        ),
+        sim_settings=SimulationSettings(config.timestep, True, Solver.DENSE_LINEAR),
         env_settings=DLOSettings.create(
             n_segments=config.n_segments,
             length=config.dlo_length,
@@ -97,12 +88,6 @@ def build_environment(config: ExperimentConfig):
             inner_radius=config.inner_radius,
             density=config.density,
             pose_estimate_linear_offsets=[],
-            gripper1_offset=Transform(
-                config.grippermc_to_marker, math.Rotations.unitary
-            ),
-            gripper2_offset=Transform(
-                -config.grippermc_to_marker, math.Rotations.unitary
-            ),
             loose_end=False,
         ),
         target_pos=config.target_pos,
@@ -179,14 +164,14 @@ def get_robot_power(state, env, env_param, timestep):
     roll_multipliers = link_multipliers[2, hinge_degree]
 
     # Map the constraint multipliers into generalized forces at each joint.
-    G1 = get_constraint_jacobian(env.lock_world_to_hidden1a, env_param, state)
+    G1 = env.lock_world_to_hidden1a.object_jacobian(state, env_param)
     f1 = G1.reshape(6, 6)[pos_yaw_degrees].T @ pos_yaw_multipliers / timestep
 
-    G2 = get_constraint_jacobian(env.lock_hidden1a_to_hidden2a, env_param, state)
+    G2 = env.lock_hidden1a_to_hidden2a.object_jacobian(state, env_param)
     G2_prime = G2.reshape(2, 6, 6)[:, hinge_degree].transpose(0, 2, 1)
     f2 = G2_prime @ pitch_multipliers / timestep
 
-    G3 = get_constraint_jacobian(env.lock_hidden2a_to_gripper1, env_param, state)
+    G3 = env.lock_hidden2a_to_gripper1.object_jacobian(state, env_param)
     G3_prime = G3.reshape(2, 6, 6)[:, hinge_degree].transpose(0, 2, 1)
     # Convert impulse-like quantities to forces using the timestep.
     f3 = G3_prime @ roll_multipliers / timestep
@@ -244,17 +229,13 @@ def build_residual_function(
             (initial_state, per_step_residuals0),
         )
 
-        terminal_velocity_error = (
-            config.target_velocity_weight
-            * (final_state.gvel.data[-1, :3] - target_vel)
+        terminal_velocity_error = config.target_velocity_weight * (
+            final_state.gvel.data[-1, :3] - target_vel
         )
-        terminal_position_error = (
-            config.target_position_weight
-            * (final_state.conf.pos[-1, :3] - config.target_pos)
+        terminal_position_error = config.target_position_weight * (
+            final_state.conf.pos[-1, :3] - config.target_pos
         )
-        control_regularization = (
-            control_data * config.control_regularization_weight
-        )
+        control_regularization = control_data * config.control_regularization_weight
 
         return jnp.concatenate(
             [
@@ -318,9 +299,7 @@ def levenberg_marquardt(residual, jac_r, joint_param, n_iter=50, damping=1e-3):
 
 def released_cylinder_param(env_param):
     return env_param.tree_replace(
-        {
-            "constraint_param.compliance.lock_gripper2_to_cylinder": jnp.full((6,), 1e8)
-        },
+        {"constraint_param.compliance.lock_gripper2_to_cylinder": jnp.full((6,), 1e8)},
     )
 
 
@@ -328,7 +307,9 @@ def render_solution(env, env_param, initial_state, solution, config: ExperimentC
     writer = imageio.get_writer(config.output_path, fps=config.render_fps)
 
     control_data = solution.data
-    control_data = jnp.concatenate([control_data, jnp.zeros_like(control_data[-1])[None]])
+    control_data = jnp.concatenate(
+        [control_data, jnp.zeros_like(control_data[-1])[None]]
+    )
 
     env_step = jax.jit(env.step)
     state = initial_state
@@ -374,7 +355,7 @@ def main():
     residual = build_residual_function(
         env, env_param, initial_state, target_vel, config
     )
-    jac_r = tangent_jacfwd(residual)
+    jac_r = jax.jacf(residual)
 
     control_signal = ControlTrajectory(jnp.ones([config.horizon, 12]))
     solution, _jacobian = levenberg_marquardt(

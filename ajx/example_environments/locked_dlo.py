@@ -191,32 +191,16 @@ class LockedDLO(DLO):
                     ("segment_wireframe_model", Transform.unitary()),
                 ]
 
-            area = jnp.pi * (self.env_settings.radius) ** 2
+            r_o = self.env_settings.outer_radius
+            r_i = self.env_settings.inner_radius
+            length = 2 * self.env_settings.segment_halflength
+            area = jnp.pi * (r_o**2 - r_i**2)
             # Cylinder mass
-            mass_cyl = (
-                self.env_settings.density
-                * area
-                * self.env_settings.segment_halflength
-                * 2
-            )
-            mass_sphere = (
-                self.env_settings.density
-                * 4
-                * jnp.pi
-                * (self.env_settings.radius) ** 3
-                / 3
-            )
-            mass = mass_cyl + mass_sphere
-            inertia_cyl_x = 0.5 * mass * self.env_settings.radius**2
-            inertia_cyl_yz = (
-                1
-                / 12
-                * mass
-                * (
-                    3 * self.env_settings.radius**2
-                    + (self.env_settings.segment_halflength * 2) ** 2
-                )
-            )
+            mass_cyl = self.env_settings.density * area * length * 2
+            mass = mass_cyl
+            inertia_cyl_x = 0.5 * mass * (r_o**2 + r_i**2)
+
+            inertia_cyl_yz = (1.0 / 12.0) * mass * (3 * (r_o**2 + r_i**2) + length**2)
             inertia = jnp.array([inertia_cyl_x, inertia_cyl_yz, inertia_cyl_yz])
 
             arms.append(RigidBody(f"body{i}", segment_geometry, debug_geometry))
@@ -351,7 +335,8 @@ class LockedDLO(DLO):
             body_offset=1,
             n_segments=self.env_settings.n_segments,
             segment_length=self.env_settings.segment_halflength * 2,
-            radius=self.env_settings.radius,
+            r_outer=self.env_settings.outer_radius,
+            r_inner=self.env_settings.inner_radius,
         )
 
         pre_step_modifiers = (
@@ -430,7 +415,9 @@ class LockedDLO(DLO):
                 param.constraint_param.frame_a[-1].flatten(),
             ]
         )
-        return DLOState(initial_conf, initial_gvel, targets)
+        multipliers_size = self.get_multiplier_size()
+        multipliers = jnp.zeros([multipliers_size])
+        return DLOState(initial_conf, initial_gvel, targets, multipliers=multipliers)
 
     def control_help_strings(self):
         return []

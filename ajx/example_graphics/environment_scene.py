@@ -74,6 +74,17 @@ class EnvironmentScene:
         self.debug_render = debug_render
         self.simulate = simulate
 
+    def replace_environment(self, new_environment, env_param, new_state):
+        self.environment = new_environment
+        env = new_environment
+        self.env_param = env_param
+        self.state = new_state
+
+        self.observation = jnp.zeros([len(env.observable_names)])
+        self.step = jit(env.step)
+        self.observe = jit(env.observe_state)
+        self.control_state = env.initial_control_state
+
     def setup(self, base: DirectObject, render):
         def toggle_physics():
             self.physics_is_active = not self.physics_is_active

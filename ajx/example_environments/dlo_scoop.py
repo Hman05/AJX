@@ -31,11 +31,12 @@ class DLOSettings:
         inner_radius: float,
         density: float,
         pose_estimate_linear_offsets: List[float],
-        gripper1_offset: Transform,
-        gripper2_offset: Transform,
         loose_end: bool = False,
     ):
         segment_length = length / n_segments
+
+        gripper1_offset = Transform.unitary()
+        gripper2_offset = Transform.unitary()
 
         pose_estimate_bodies = []
         pose_estimate_constraints_a = []
@@ -392,10 +393,16 @@ class DLOScoop(Environment):
         grapple_box_length = self.grapple_box_length
 
         reference_box = geometry.Box(
-            f"grip_tool1_box",
-            grapple_box_length,
-            0.3,
-            0.15,
+            f"reference_box",
+            0.03,
+            0.03,
+            0.06,
+        )
+        reference_box2 = geometry.Box(
+            f"reference_box2",
+            0.14 * 0.5,
+            0.25 * 0.5,
+            0.01 * 0.5,
         )
         tool1_model_local_transform = Transform(
             jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_y
@@ -444,19 +451,26 @@ class DLOScoop(Environment):
             [("shovel", Transform.unitary())],
         )
         grip_tool2_param = RigidBodyParameters.create(
-            mass=density * 0.2 * 0.2 * grapple_box_length,
-            inertia_diag=reference_box.get_diag_inertia(density),
+            mass=0.14 * 0.25 * 0.01 * density * 0.5**3,
+            inertia_diag=reference_box2.get_diag_inertia(density),
             name="grip_tool2",
         )
 
         cylinder = RigidBody(
             f"cylinder",
-            [("cylinder", Transform.unitary())],
+            [
+                ("cylinder", Transform.unitary()),
+            ],
             [("cylinder", Transform.unitary())],
         )
+        r = 0.03
+        h = 0.04
+        cyl_mass = density * jnp.pi * r**2 * h
+        Jxy = 1 / 12 * cyl_mass * (3 * r**2 + h**2)
+        Jz = 0.5 * cyl_mass * r**2
         cylinder_param = RigidBodyParameters.create(
-            mass=density * 0.2 * 0.2 * grapple_box_length,
-            inertia_diag=reference_box.get_diag_inertia(density),
+            mass=cyl_mass,
+            inertia_diag=jnp.array([Jxy, Jxy, Jz]),
             name="cylinder",
         )
 
@@ -749,6 +763,7 @@ class DLOScoop(Environment):
         )
 
         self.geometry_list = self._create_geometry()
+        self.geometry_list = tuple([*list(self.geometry_list), reference_box2])
 
         vel_rotation_vec = self.target_vel[:3] / jnp.linalg.norm(self.target_vel[:3])
         # Rotation interpretation: x-axis lands on vel_rotation_vec
