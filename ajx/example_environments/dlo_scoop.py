@@ -420,14 +420,14 @@ class DLOScoop(Environment):
         # Hidden links to grip tool 1
         hidden_link1a = RigidBody(f"hidden_link1a", [], [])
         hidden_link1a_param = RigidBodyParameters.create(
-            mass=1.0,
-            inertia_diag=jnp.array([1.0, 1.0, 1.0]),
+            mass=0.001,
+            inertia_diag=jnp.array([1.0, 1.0, 1.0]) * 0.001,
             name="hidden_link1a",
         )
         hidden_link2a = RigidBody(f"hidden_link2a", [], [])
         hidden_link2a_param = RigidBodyParameters.create(
-            mass=1.0,
-            inertia_diag=jnp.array([1.0, 1.0, 1.0]),
+            mass=0.001,
+            inertia_diag=jnp.array([1.0, 1.0, 1.0]) * 0.001,
             name="hidden_link2a",
         )
         grip_tool1 = RigidBody(
@@ -440,7 +440,7 @@ class DLOScoop(Environment):
             ],
         )
         grip_tool1_param = RigidBodyParameters.create(
-            mass=density * 0.2 * 0.2 * grapple_box_length,
+            mass=density * 0.03 * 0.03 * 0.06,
             inertia_diag=reference_box.get_diag_inertia(density),
             name="grip_tool1",
         )
@@ -465,7 +465,7 @@ class DLOScoop(Environment):
         )
         r = 0.03
         h = 0.04
-        cyl_mass = density * jnp.pi * r**2 * h
+        cyl_mass = 3 * density * jnp.pi * r**2 * h
         Jxy = 1 / 12 * cyl_mass * (3 * r**2 + h**2)
         Jz = 0.5 * cyl_mass * r**2
         cylinder_param = RigidBodyParameters.create(
@@ -763,7 +763,6 @@ class DLOScoop(Environment):
         )
 
         self.geometry_list = self._create_geometry()
-        self.geometry_list = tuple([*list(self.geometry_list), reference_box2])
 
         vel_rotation_vec = self.target_vel[:3] / jnp.linalg.norm(self.target_vel[:3])
         # Rotation interpretation: x-axis lands on vel_rotation_vec

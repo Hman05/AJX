@@ -24,7 +24,7 @@ if __name__ == "__main__":
         sim_settings=SimulationSettings(timestep, True, Solver.DENSE_LINEAR),
         env_settings=DLOSettings.create(
             n_segments=n_segments,
-            length=0.6,
+            length=0.3,
             outer_radius=0.016,
             inner_radius=0.014,
             density=1000,
@@ -37,7 +37,7 @@ if __name__ == "__main__":
     )
 
     nu = 0.333
-    E = 6e6
+    E = 4e7
     cable_param = CableParameters(
         youngs_modulus=E,
         shear_modulus=E / (2 * (1 + nu)),
