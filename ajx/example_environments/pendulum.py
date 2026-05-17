@@ -48,7 +48,7 @@ class Pendulum(Environment):
         self.hinge = OneBodyConstraint(
             name="hinge",
             body="pendulum",
-            constraint_type=ConstraintType.HINGE.value,
+            constraint_residual=ConstraintResidual.AXIAL_WORLD_SPHERICAL.value,
         )
 
         frame_rotation = math.quat_from_axis_angle(jnp.array([0.0, 0.0, 1.0]), 0.0)

@@ -11,7 +11,7 @@ from ajx.definitions import Transform, State
 from ajx.param import SimulationParameters
 from typing import Union, Tuple
 from functools import partial
-from ajx.constraints.base import Constraint, ConstraintType, get_frame_transform
+from ajx.constraints.base import Constraint, ConstraintResidual, get_frame_transform
 
 
 @struct.dataclass
@@ -26,12 +26,12 @@ class GearConstraint(Constraint):
     scalar_body_b: str
     gear_ratio: float  # TODO: Move to parameter
     dof: int = 1
-    constraint_type: ConstraintType = 0
+    constraint_residual: ConstraintResidual = 0
 
-    # def __init__(self, name: str, body: str, constraint_type: ConstraintType):
+    # def __init__(self, name: str, body: str, constraint_residual: ConstraintResidual):
     #     self.name = name
     #     self.body = body
-    #     self.constraint_type = constraint_type
+    #     self.constraint_residual = constraint_residual
 
     def get_num_bodies():
         return 2
@@ -57,7 +57,7 @@ class GearConstraint(Constraint):
             state,
             (scalar_body_a, scalar_body_b),
             constraint_id,
-            self.constraint_type,
+            self.constraint_residual,
         )
 
     @jit
@@ -66,7 +66,7 @@ class GearConstraint(Constraint):
         state: State,
         body_ids: Tuple[Union[int, jax.Array]],
         constraint_id: Union[int, jax.Array],
-        constraint_type: Union[ConstraintType, jax.Array],
+        constraint_residual: Union[ConstraintResidual, jax.Array],
     ) -> jax.Array:
         """
         C
@@ -92,7 +92,7 @@ class GearConstraint(Constraint):
             state,
             (scalar_body_a, scalar_body_b),
             constraint_id,
-            self.constraint_type,
+            self.constraint_residual,
         )
 
     @jit
@@ -101,7 +101,7 @@ class GearConstraint(Constraint):
         state: State,
         body_ids: Tuple[Union[int, jax.Array]],
         constraint_id: Union[int, jax.Array],
-        constraint_type: Union[ConstraintType, jax.Array],
+        constraint_residual: Union[ConstraintResidual, jax.Array],
     ) -> jax.Array:
         scalar_body_a_id = body_ids[0]
         scalar_body_b_id = body_ids[1]

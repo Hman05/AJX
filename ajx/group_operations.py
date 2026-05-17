@@ -47,18 +47,17 @@ def sparse_blockrow_mul_blockdiag(blockrow, blockdiag, col_sizes, col_sq_offsets
 
 
 if __name__ == "__main__":
+    # Broken and needs updating...
     jnp.set_printoptions(edgeitems=30, linewidth=1000, precision=2, suppress=True)
     from ajx.example_environments.dlo import DLO
     from ajx.example_environments.dlo import DLO, DLOSettings
     from ajx.simulation import SimulationSettings, Solver
-    from ajx.constraints import ConstraintType
 
     environment = DLO(
         sim_settings=SimulationSettings(0.01, True, Solver.DENSE_LINEAR),
         env_settings=DLOSettings(
             n_bodies=2,
             body_length=0.02,
-            constraint_type=ConstraintType.SE3.value,
             loose_end=False,
         ),
     )

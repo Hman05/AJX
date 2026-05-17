@@ -5,7 +5,6 @@ jax.config.update("jax_enable_x64", True)
 
 from ajx.example_graphics.environment_scene import EnvironmentScene
 from ajx.example_graphics.application import Application
-from ajx.constraints import ConstraintType
 from ajx.example_environments.dlo import DLO, DLOSettings, CableParameters
 from ajx.example_environments.locked_dlo import LockedDLO
 from ajx.simulation import SimulationSettings, Solver

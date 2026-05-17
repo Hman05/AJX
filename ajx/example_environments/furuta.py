@@ -74,7 +74,7 @@ class Furuta(Environment):
             name="hinge1",
             # body_a=None,
             body="arm1",
-            constraint_type=ConstraintType.HINGE.value,
+            constraint_residual=ConstraintResidual.AXIAL_WORLD_SPHERICAL.value,
         )
         rotation1 = math.quat_from_axis_angle(jnp.array([0.0, 0.0, 1.0]), 0.5 * jnp.pi)
         rotation2 = math.quat_from_axis_angle(jnp.array([1.0, 0.0, 0.0]), -0.0 * jnp.pi)
@@ -103,7 +103,7 @@ class Furuta(Environment):
             name="hinge2",
             body_a="arm1",
             body_b="arm2",
-            constraint_type=ConstraintType.HINGE.value,
+            constraint_residual=ConstraintResidual.AXIAL_WORLD_SPHERICAL.value,
         )
         hinge2_param = ConstraintParameters.create(
             free_degree=5,

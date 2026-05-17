@@ -14,7 +14,7 @@ class DLOAttachedSettings:
     n_bodies: int
     body_length: float
     mass_density: float
-    constraint_type: ConstraintType
+    constraint_residual: ConstraintResidual
     hinge_motor_attachment: bool
     body_side_length: Optional[float] = 0.1
 
@@ -72,7 +72,7 @@ class CoupleConstraints(PreStepModifier):
     target_slice: Tuple
     body_ids: jax.Array
     constraint_ids: jax.Array
-    constraint_type: ConstraintType
+    constraint_residual: ConstraintResidual
 
     def update_params(self, state: DLOState, u: jax.Array, param: SimulationParameters):
         ccp: CoupledConstraintParameters = param.sparse_param.coupled_constraint_param
@@ -84,7 +84,7 @@ class CoupleConstraints(PreStepModifier):
             state,
             self.body_ids,
             self.constraint_ids,
-            self.constraint_type,
+            self.constraint_residual,
         )
         compliance = jnp.clip(
             1
@@ -188,18 +188,23 @@ class DLOAttached(Environment):
             jnp.arange(n), (gradient_start - gradient_end) / n
         )
         density = self.env_settings.mass_density
-        
+
         for i in range(self.env_settings.n_bodies):
             box = geometry.Box(
                 f"box{i}",
-                0.5*self.env_settings.body_length,
-                0.5*self.env_settings.body_side_length,
-                0.5*self.env_settings.body_side_length,
+                0.5 * self.env_settings.body_length,
+                0.5 * self.env_settings.body_side_length,
+                0.5 * self.env_settings.body_side_length,
                 translation=(0.0, 0.0, 0.0),
                 color=tuple([*gradient[i]]),
             )
             boxes.append(box)
-            mass = density * self.env_settings.body_side_length * self.env_settings.body_side_length * self.env_settings.body_length
+            mass = (
+                density
+                * self.env_settings.body_side_length
+                * self.env_settings.body_side_length
+                * self.env_settings.body_length
+            )
             inertia = box.get_diag_inertia(density)
 
             arms.append(RigidBody(f"body{i}", (f"box{i}",)))
@@ -221,7 +226,7 @@ class DLOAttached(Environment):
             self.attachment_constraint = OneBodyConstraint(
                 name=f"attachment_hinge",
                 body="body0",
-                constraint_type=ConstraintType.HINGE.value,
+                constraint_residual=ConstraintResidual.AXIAL_WORLD_SPHERICAL.value,
             )
             attachment_constraint_param = ConstraintParameters.create(
                 free_degree=5,
@@ -236,7 +241,7 @@ class DLOAttached(Environment):
             self.attachment_constraint = OneBodyConstraint(
                 name=f"attachment_lock",
                 body="body0",
-                constraint_type=self.env_settings.constraint_type,
+                constraint_residual=self.env_settings.constraint_residual,
             )
             attachment_constraint_param = ConstraintParameters.create_locked(
                 frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), rotation1),
@@ -247,7 +252,6 @@ class DLOAttached(Environment):
                 offset=0.0,
                 name="attachment_lock",
             )
-            
 
         # To make DLO lock joint constraints between all bodies
         bl = self.env_settings.body_length
@@ -257,13 +261,13 @@ class DLOAttached(Environment):
                     name=f"lock{i}",
                     body_a=f"body{i}",
                     body_b=f"body{i+1}",
-                    constraint_type=self.env_settings.constraint_type,
+                    constraint_residual=self.env_settings.constraint_residual,
                 )
             )
             lock_joint_param.append(
                 ConstraintParameters.create_locked(
-                    frame_a=Frame(jnp.array([0.5*bl, 0.0, 0.0]), rotation1),
-                    frame_b=Frame(jnp.array([-0.5*bl, 0.0, 0.0]), rotation2),
+                    frame_a=Frame(jnp.array([0.5 * bl, 0.0, 0.0]), rotation1),
+                    frame_b=Frame(jnp.array([-0.5 * bl, 0.0, 0.0]), rotation2),
                     compliance=1e-8,
                     viscous_compliance=1e-5,
                     damping=2 * self.reference_timestep,
@@ -272,17 +276,13 @@ class DLOAttached(Environment):
                 )
             )
 
-        rb_param = RigidBodyParameters.concatenate(
-            [*arms_param]
-        )
+        rb_param = RigidBodyParameters.concatenate([*arms_param])
         rigid_bodies = tuple([*arms])
 
         constraint_param = ConstraintParameters.concatenate(
             [attachment_constraint_param, *lock_joint_param]
         )
         constraints = tuple([self.attachment_constraint, *self.lock_joints])
-
-        
 
         # n_constraints = one per body + one
         n_segment_locks = self.env_settings.n_bodies - 1
@@ -297,14 +297,14 @@ class DLOAttached(Environment):
                 axis=-1,
             ),
             constraint_ids=jnp.arange(0, n_segment_locks)[:, None],
-            constraint_type=self.env_settings.constraint_type,
+            constraint_residual=self.env_settings.constraint_residual,
         )
 
         if self.env_settings.hinge_motor_attachment:
-            hinge_motor = LockAtZeroSpeedMotor("hinge_motor", self.attachment_constraint, 0, 0, 5)
-            pre_step_modifiers = (
-                couple_constraints, hinge_motor
+            hinge_motor = LockAtZeroSpeedMotor(
+                "hinge_motor", self.attachment_constraint, 0, 0, 5
             )
+            pre_step_modifiers = (couple_constraints, hinge_motor)
         else:
             pre_step_modifiers = (couple_constraints,)
 
@@ -342,7 +342,7 @@ class DLOAttached(Environment):
 
         coupled_constraint_param = CoupledConstraintParameters(
             linear_stiffness=PositiveParam(jnp.ones(6) * 1e5),
-            #compliance=jnp.ones(6) * 1e-5,
+            # compliance=jnp.ones(6) * 1e-5,
             quadratic_stiffness=PositiveParam(jnp.ones(6) * 0.0),
             damping=jnp.ones(6) * 2 * self.sim.settings.timestep,
             is_velocity=jnp.zeros(6, dtype=bool),
@@ -376,7 +376,9 @@ class DLOAttached(Environment):
         )
 
         body_transforms = []
-        body_transforms.append(self.attachment_constraint.place_other(param, world_transform, 0))
+        body_transforms.append(
+            self.attachment_constraint.place_other(param, world_transform, 0)
+        )
         for i in range(len(self.lock_joints)):
             new_transform = self.lock_joints[i].place_other(
                 0, param, body_transforms[-1], 0
@@ -398,15 +400,17 @@ class DLOAttached(Environment):
         multipliers = jnp.zeros([multipliers_size])
 
         return DLOState(initial_conf, initial_gvel, targets, multipliers=multipliers)
-    
+
     def get_stiffness_from_material_parameters(self, youngs_modulus, shear_modulus):
-        
+
         l = self.env_settings.body_length
         s = self.env_settings.body_side_length
 
-        area = s**2    # Cross-sectional area
-        area_moment = s**4 / 12   # Second moment of area
-        polar_moment = s**4 / 6    # Second polar moment of area, assumes square cross section
+        area = s**2  # Cross-sectional area
+        area_moment = s**4 / 12  # Second moment of area
+        polar_moment = (
+            s**4 / 6
+        )  # Second polar moment of area, assumes square cross section
 
         # Stiffness values per segment
         axial_stiffness = youngs_modulus * area / l

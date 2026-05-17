@@ -12,7 +12,7 @@ from typing import Union, Tuple
 from functools import partial
 from ajx.constraints.base import (
     Constraint,
-    ConstraintType,
+    ConstraintResidual,
     get_frame_transform,
     get_frame_transform_ext,
 )
@@ -22,10 +22,6 @@ from ajx.constraints import TwoBodyConstraint
 class TwoBodyShaftConstraint(Constraint):
     """
     A constraint that restricts the relative motion between two bodies and a shaft.
-
-    Constraint types currently supported:
-     - Hinge
-     - Primsatic
     """
 
     name: str
@@ -33,7 +29,7 @@ class TwoBodyShaftConstraint(Constraint):
     body_b: str
     shaft: str
     parent_constraint: str
-    constraint_type: ConstraintType
+    constraint_residual: ConstraintResidual
     is_attached_to_world: bool = False
 
     @classmethod
@@ -75,26 +71,28 @@ class TwoBodyShaftConstraint(Constraint):
         self.body_b = parent_constraint.body_b
         self.parent_constraint = parent_constraint.name
         self.shaft = shaft
-        self.constraint_type = parent_constraint.constraint_type
+        self.constraint_residual = parent_constraint.constraint_residual
 
     def get_multiplier_names(self) -> Tuple[str]:
-        if self.constraint_type == ConstraintType.HINGE.value:
+        if self.constraint_residual == ConstraintResidual.AXIAL_WORLD_SPHERICAL.value:
             return ("nx", "ny", "nz", "n_bend", "n_torsion", "t")
-        elif self.constraint_type == ConstraintType.PRISMATIC.value:
+        elif self.constraint_residual == ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value:
             return ("nu", "nw", "n_bend1", "n_torsion", "n_bend2", "t")
         return ()
 
     def compute_offset(
-        default_offset: jax.Array, target: jax.Array, constraint_type: ConstraintType
+        default_offset: jax.Array,
+        target: jax.Array,
+        constraint_residual: ConstraintResidual,
     ):
         linear_offset = default_offset - target
         roational_offset = (linear_offset + jnp.pi) % (2 * jnp.pi) - jnp.pi
 
         hinge_offset = roational_offset * (
-            constraint_type == ConstraintType.HINGE.value
+            constraint_residual == ConstraintResidual.AXIAL_WORLD_SPHERICAL.value
         )
         prismatic_offset = linear_offset * (
-            constraint_type == ConstraintType.PRISMATIC.value
+            constraint_residual == ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value
         )
         return hinge_offset + prismatic_offset
 
@@ -116,7 +114,7 @@ class TwoBodyShaftConstraint(Constraint):
             state,
             (body_a_id, body_b_id, shaft_id),
             (constraint_id, parent_constraint_id),
-            self.constraint_type,
+            self.constraint_residual,
         )
 
     @jit
@@ -125,7 +123,7 @@ class TwoBodyShaftConstraint(Constraint):
         state: State,
         body_ids: Tuple[Union[int, jax.Array]],
         constraint_ids: Tuple[Union[int, jax.Array]],
-        constraint_type: Union[ConstraintType, jax.Array],
+        constraint_residual: Union[ConstraintResidual, jax.Array],
     ) -> jax.Array:
         """
         C
@@ -183,10 +181,10 @@ class TwoBodyShaftConstraint(Constraint):
         free_hinge = -jnp.dot(axis_angle, axis) - gear_ratio * shaft_conf
 
         hinge_constraint = jnp.block([free_hinge[None]]) * (
-            constraint_type == ConstraintType.HINGE.value
+            constraint_residual == ConstraintResidual.AXIAL_WORLD_SPHERICAL.value
         )
         prismatic_constraint = jnp.block([free_prismatic[None]]) * (
-            constraint_type == ConstraintType.PRISMATIC.value
+            constraint_residual == ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value
         )
         return hinge_constraint + prismatic_constraint
 
@@ -196,7 +194,7 @@ class TwoBodyShaftConstraint(Constraint):
         state: State,
         body_ids: Tuple[Union[int, jax.Array]],
         constraint_ids: Tuple[Union[int, jax.Array]],
-        constraint_type: Union[ConstraintType, jax.Array],
+        constraint_residual: Union[ConstraintResidual, jax.Array],
     ) -> jax.Array:
         constraint_id = constraint_ids[0]
         parent_constraint_id = constraint_ids[1]
@@ -229,7 +227,7 @@ class TwoBodyShaftConstraint(Constraint):
                 jnp.array([-gear_ratio]),
             ],
             axis=None,
-        ) * (constraint_type == 0)
+        ) * (constraint_residual == 0)
         jac_prismatic = jnp.concatenate(
             [
                 jnp.concatenate([dot2_3_a]),
@@ -237,6 +235,6 @@ class TwoBodyShaftConstraint(Constraint):
                 jnp.array([-gear_ratio]),
             ],
             axis=None,
-        ) * (constraint_type == 1)
+        ) * (constraint_residual == 1)
 
         return jac_hinge + jac_prismatic

@@ -41,7 +41,7 @@ class GainMotor(PreStepModifier):
         )
         constraint_ids = (param.constraint_param.names.index(self.constraint.name),)
         jac = self.constraint.__class__.jacobian(
-            param, state, body_ids, constraint_ids, self.constraint.constraint_type
+            param, state, body_ids, constraint_ids, self.constraint.constraint_residual
         ).reshape(
             len(self.constraint.bodies), self.constraint.get_constrained_degrees(), -1
         )

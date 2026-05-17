@@ -61,7 +61,7 @@ class CartPole(Environment):
         self.prismatic = OneBodyConstraint(
             name="prismatic",
             body="cart",
-            constraint_type=ConstraintType.PRISMATIC.value,
+            constraint_residual=ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value,
         )
         motor_param = GainMotorParameters(0.04, 20.0)
         motor = GainMotor("motor", self.prismatic, sim_settings.timestep, 0, 0)
@@ -91,7 +91,7 @@ class CartPole(Environment):
             name="hinge",
             body_a="cart",
             body_b="pendulum",
-            constraint_type=ConstraintType.HINGE.value,
+            constraint_residual=ConstraintResidual.AXIAL_WORLD_SPHERICAL.value,
         )
         hinge_param = ConstraintParameters.create(
             free_degree=5,

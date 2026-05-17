@@ -12,7 +12,7 @@ from typing import Union, Tuple
 from functools import partial
 from ajx.constraints.base import (
     Constraint,
-    ConstraintType,
+    ConstraintResidual,
     get_frame_transform,
     get_frame_transform_ext,
 )
@@ -21,20 +21,12 @@ from ajx.constraints.base import (
 class TwoBodyConstraint(Constraint):
     """
     A constraint that restricts the relative motion between two bodies.
-
-    Constraint types currently supported:
-     - Hinge
-     - Prismatic
-
-    TODO: Enough to consider this as a rotational lock + translational lock?
-     - Spherical to constrain translation -> Hinge
-     - Dot 2 to constraint translation -> Prismatic
     """
 
     name: str
     body_a: str
     body_b: str
-    constraint_type: ConstraintType
+    constraint_residual: ConstraintResidual
     is_attached_to_world: bool = False
 
     @classmethod
@@ -66,29 +58,35 @@ class TwoBodyConstraint(Constraint):
         return (self.name,)
 
     def __init__(
-        self, name: str, body_a: str, body_b: str, constraint_type: ConstraintType
+        self,
+        name: str,
+        body_a: str,
+        body_b: str,
+        constraint_residual: ConstraintResidual,
     ):
         self.name = name
         self.body_a = body_a
         self.body_b = body_b
-        self.constraint_type = constraint_type
+        self.constraint_residual = constraint_residual
 
     def get_multiplier_names(self) -> Tuple[str]:
-        if self.constraint_type == ConstraintType.HINGE.value:
+        if self.constraint_residual == ConstraintResidual.AXIAL_WORLD_SPHERICAL.value:
             return ("nx", "ny", "nz", "n_bend1", "n_bend2", "n_torsion")
-        elif self.constraint_type == ConstraintType.PRISMATIC.value:
+        elif self.constraint_residual == ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value:
             return ("nu", "nw", "nv", "n_bend1", "n_torsion", "n_bend2")
-        elif self.constraint_type == ConstraintType.SE3.value:
+        elif self.constraint_residual == ConstraintResidual.SE3.value:
             return ("nu", "nv", "nw", "nru", "nrv", "nrw")
-        elif self.constraint_type == ConstraintType.BEND_TWIST.value:
+        elif self.constraint_residual == ConstraintResidual.BEND_TWIST.value:
             return ("nu", "nv", "nw", "n_bend1", "n_bend2", "n_twist")
         return ()
 
     def compute_offset(
-        default_offset: jax.Array, target: jax.Array, constraint_type: ConstraintType
+        default_offset: jax.Array,
+        target: jax.Array,
+        constraint_residual: ConstraintResidual,
     ):
         rotational_degrees = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=bool) * (
-            constraint_type == ConstraintType.PRISMATIC.value
+            constraint_residual == ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value
         )
         linear_degrees = jnp.logical_not(rotational_degrees)
         linear_degrees = jnp.logical_not(rotational_degrees)
@@ -109,7 +107,11 @@ class TwoBodyConstraint(Constraint):
         body_a_id = param.rigid_body_param.names.index(self.body_a)
         constraint_id = param.constraint_param.names.index(self.name)
         return TwoBodyConstraint.func(
-            param, state, (body_a_id, body_b_id), (constraint_id,), self.constraint_type
+            param,
+            state,
+            (body_a_id, body_b_id),
+            (constraint_id,),
+            self.constraint_residual,
         )
 
     def object_jacobian(
@@ -121,7 +123,11 @@ class TwoBodyConstraint(Constraint):
         body_a_id = param.rigid_body_param.names.index(self.body_a)
         constraint_id = param.constraint_param.names.index(self.name)
         return TwoBodyConstraint.jacobian(
-            param, state, (body_a_id, body_b_id), (constraint_id,), self.constraint_type
+            param,
+            state,
+            (body_a_id, body_b_id),
+            (constraint_id,),
+            self.constraint_residual,
         )
 
     @jit
@@ -130,7 +136,7 @@ class TwoBodyConstraint(Constraint):
         state: State,
         body_ids: Tuple[Union[int, jax.Array]],
         constraint_ids: Tuple[Union[int, jax.Array]],
-        constraint_type: Union[ConstraintType, jax.Array],
+        constraint_residual: Union[ConstraintResidual, jax.Array],
     ) -> jax.Array:
         """
         C
@@ -192,15 +198,15 @@ class TwoBodyConstraint(Constraint):
 
         hinge_constraint = jnp.block(
             [spherical, dot1_1[None], dot1_2[None], free_hinge[None]]
-        ) * (constraint_type == ConstraintType.HINGE.value)
+        ) * (constraint_residual == ConstraintResidual.AXIAL_WORLD_SPHERICAL.value)
         prismatic_constraint = jnp.block(
             [co_spherical, dot1_1[None], dot1_2[None], free_hinge[None]]
-        ) * (constraint_type == ConstraintType.PRISMATIC.value)
+        ) * (constraint_residual == ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value)
         se3_constraint = jnp.block([co_spherical, so3_err]) * (
-            constraint_type == ConstraintType.SE3.value
+            constraint_residual == ConstraintResidual.SE3.value
         )
         bend_twist_constraint = jnp.block([co_spherical, bend1, bend2, twist]) * (
-            constraint_type == ConstraintType.BEND_TWIST.value
+            constraint_residual == ConstraintResidual.BEND_TWIST.value
         )
         return (
             hinge_constraint
@@ -215,7 +221,7 @@ class TwoBodyConstraint(Constraint):
         state: State,
         body_ids: Tuple[Union[int, jax.Array]],
         constraint_ids: Tuple[Union[int, jax.Array]],
-        constraint_type: Union[ConstraintType, jax.Array],
+        constraint_residual: Union[ConstraintResidual, jax.Array],
     ) -> jax.Array:
         constraint_id = constraint_ids[0]
         body_a_id, body_b_id = body_ids
@@ -288,21 +294,21 @@ class TwoBodyConstraint(Constraint):
                 jnp.concatenate([spherical_b, dot1_1_b, dot1_2_b, u_a_tangent_b]),
             ],
             axis=None,
-        ) * (constraint_type == 0)
+        ) * (constraint_residual == 0)
         jac_prismatic = jnp.concatenate(
             [
                 jnp.concatenate([co_spherical_a, dot1_1_a, dot1_2_a, u_a_tangent_a]),
                 jnp.concatenate([co_spherical_b, dot1_1_b, dot1_2_b, u_a_tangent_b]),
             ],
             axis=None,
-        ) * (constraint_type == 1)
+        ) * (constraint_residual == 1)
         jac_se3 = jnp.concatenate(
             [
                 jnp.concatenate([co_spherical_a, so3_err_a]),
                 jnp.concatenate([co_spherical_b, so3_err_b]),
             ],
             axis=None,
-        ) * (constraint_type == ConstraintType.SE3.value)
+        ) * (constraint_residual == ConstraintResidual.SE3.value)
         jac_twist_bend = jnp.concatenate(
             [
                 jnp.concatenate(
@@ -313,7 +319,7 @@ class TwoBodyConstraint(Constraint):
                 ),
             ],
             axis=None,
-        ) * (constraint_type == ConstraintType.BEND_TWIST.value)
+        ) * (constraint_residual == ConstraintResidual.BEND_TWIST.value)
 
         return jac_hinge + jac_prismatic + jac_se3 + jac_twist_bend
 
@@ -348,7 +354,7 @@ class TwoBodyConstraint(Constraint):
         r_delta = r_a - r_b
         u_a = math.rotation_matrix(frame_a_rot)[:, 0]
         x = jnp.dot(u_a, r_delta)
-        free_prismatic = x * (self.constraint_type == 1)
+        free_prismatic = x * (self.constraint_residual == 1)
 
         # For hinge
         frame_a_rot_inv = math.conjugate(frame_a_rot)
@@ -356,7 +362,7 @@ class TwoBodyConstraint(Constraint):
         axis_angle = math.to_rotation_vector(delta_rotation)
         axis = jnp.array([1.0, 0.0, 0.0])
         theta = jnp.dot(axis_angle, axis)
-        free_hinge = theta * (self.constraint_type == 0)
+        free_hinge = theta * (self.constraint_residual == 0)
         return free_hinge + free_prismatic
 
     def place_other(

@@ -381,7 +381,9 @@ class Simulation:
                 self.h,
                 f_ext.flatten(),
                 b_data,
-                lbda_limits=jnp.vstack([jnp.full((nc,), -jnp.inf), jnp.full((nc,), jnp.inf)]),
+                lbda_limits=jnp.vstack(
+                    [jnp.full((nc,), -jnp.inf), jnp.full((nc,), jnp.inf)]
+                ),
                 Nit=self.settings.pgs_iterations,
             )
         elif self.settings.solver == Solver.SPARSE_PGS:
@@ -396,7 +398,9 @@ class Simulation:
                 self.h,
                 f_ext.flatten(),
                 b_data,
-                lbda_limits=jnp.vstack([jnp.full((nc,), -jnp.inf), jnp.full((nc,), jnp.inf)]),
+                lbda_limits=jnp.vstack(
+                    [jnp.full((nc,), -jnp.inf), jnp.full((nc,), jnp.inf)]
+                ),
                 Nit=self.settings.pgs_iterations,
             )
         else:
@@ -570,8 +574,8 @@ class Simulation:
             )
 
             # Stack constraint types as a jnp.array
-            constraint_types = jnp.array(
-                [constraint.constraint_type for constraint in constraint_group]
+            constraint_residuals = jnp.array(
+                [constraint.constraint_residual for constraint in constraint_group]
             )
 
             # Compute Jacobians and constraint offsets
@@ -580,14 +584,14 @@ class Simulation:
                 state,
                 body_ids,
                 constraint_ids,
-                constraint_types,
+                constraint_residuals,
             )
             default_offsets = jax.vmap(Constraint.func, (None, None, 0, 0, 0))(
                 param,
                 state,
                 body_ids,
                 constraint_ids,
-                constraint_types,
+                constraint_residuals,
             )
 
             # Copy the Jacobian data from the constraint group to the full Jacobian
@@ -617,7 +621,7 @@ class Simulation:
 
             # Problem: What if Lie group / Manifold? Comparing Lie algebra objects?
             offsets = jax.vmap(Constraint.compute_offset)(
-                default_offsets, target, constraint_types
+                default_offsets, target, constraint_residuals
             )
 
             regularization = (
@@ -749,10 +753,14 @@ class Simulation:
         S = VBCMatrix.create(S_data, row_indices, col_ptr, block_sizes, block_sizes)
 
         return S, rsi_dict
-    
+
     def _assemble_constraint_metadata(self):
-        return {"constraint_type": jnp.array([c.constraint_type for c in self.constraint_list])}
-        
+        return {
+            "constraint_residual": jnp.array(
+                [c.constraint_residual for c in self.constraint_list]
+            )
+        }
+
 
 def _bdot_over_intersection(
     a_indices,

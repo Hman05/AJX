@@ -16,7 +16,7 @@ class DLOSettings:
     segment_halflength: float
     outer_radius: float
     inner_radius: float
-    constraint_type: ConstraintType
+    constraint_residual: ConstraintResidual
     density: float
     pose_estimate_bodies: List[str] = ()
     pose_estimate_constraints_a: List[str] = ()
@@ -70,7 +70,7 @@ class DLOSettings:
             0.5 * segment_length,
             outer_radius,
             inner_radius,
-            ConstraintType.BEND_TWIST.value,
+            ConstraintResidual.BEND_TWIST.value,
             density,
             pose_estimate_bodies,
             pose_estimate_constraints_a,
@@ -483,7 +483,7 @@ class DLO(Environment):
         self.lock_world_to_hidden1a = OneBodyConstraint(
             name=f"lock_world_to_hidden1a",
             body="hidden_link1a",
-            constraint_type=ConstraintType.HINGE.value,
+            constraint_residual=ConstraintResidual.AXIAL_WORLD_SPHERICAL.value,
         )
         lock_world_to_hidden1_param = ConstraintParameters.create_locked_ext(
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_z),
@@ -500,7 +500,7 @@ class DLO(Environment):
             name=f"lock_hidden1a_to_hidden2a",
             body_a=f"hidden_link1a",
             body_b=f"hidden_link2a",
-            constraint_type=ConstraintType.HINGE.value,
+            constraint_residual=ConstraintResidual.AXIAL_WORLD_SPHERICAL.value,
         )
         lock_hidden1a_to_hidden2a_param = ConstraintParameters.create_locked_ext(
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_y),
@@ -517,7 +517,7 @@ class DLO(Environment):
             name=f"lock_hidden2a_to_gripper1",
             body_a=f"hidden_link2a",
             body_b=f"grip_tool1",
-            constraint_type=ConstraintType.HINGE.value,
+            constraint_residual=ConstraintResidual.AXIAL_WORLD_SPHERICAL.value,
         )
         lock_hidden2a_to_gripper1_param = ConstraintParameters.create_locked_ext(
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.identity),
@@ -537,7 +537,7 @@ class DLO(Environment):
                 name=f"lock_gripper1_to_dlo",
                 body_a=f"grip_tool1",
                 body_b=f"body0",
-                constraint_type=self.env_settings.constraint_type,
+                constraint_residual=self.env_settings.constraint_residual,
             )
         )
         lock_joint_param.append(
@@ -559,7 +559,7 @@ class DLO(Environment):
                     name=f"lock{i}",
                     body_a=f"body{i}",
                     body_b=f"body{i+1}",
-                    constraint_type=self.env_settings.constraint_type,
+                    constraint_residual=self.env_settings.constraint_residual,
                 )
             )
             lock_joint_param.append(
@@ -582,7 +582,7 @@ class DLO(Environment):
                 name="lock_dlo_to_gripper2",
                 body_a=f"body{self.env_settings.n_segments - 1}",
                 body_b="grip_tool2",
-                constraint_type=self.env_settings.constraint_type,
+                constraint_residual=self.env_settings.constraint_residual,
             )
         )
         lock_joint_param.append(
@@ -602,7 +602,7 @@ class DLO(Environment):
             name=f"lock_gripper2_to_hidden2b",
             body_a=f"grip_tool2",
             body_b=f"hidden_link2b",
-            constraint_type=ConstraintType.HINGE.value,
+            constraint_residual=ConstraintResidual.AXIAL_WORLD_SPHERICAL.value,
         )
         lock_gripper2_to_hidden_link2b_param = ConstraintParameters.create_locked_ext(
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.identity),
@@ -619,7 +619,7 @@ class DLO(Environment):
             name=f"lock_hidden2b_to_hidden1b",
             body_a=f"hidden_link2b",
             body_b=f"hidden_link1b",
-            constraint_type=ConstraintType.HINGE.value,
+            constraint_residual=ConstraintResidual.AXIAL_WORLD_SPHERICAL.value,
         )
         lock_hidden2b_to_hidden1b_param = ConstraintParameters.create_locked_ext(
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_y),
@@ -636,7 +636,7 @@ class DLO(Environment):
         self.lock_hidden1b_to_world = OneBodyConstraint(
             name=f"lock_hidden1b_to_world",
             body=f"hidden_link1b",
-            constraint_type=ConstraintType.HINGE.value,
+            constraint_residual=ConstraintResidual.AXIAL_WORLD_SPHERICAL.value,
         )
         # Locked to the world with a special offset (total length)
         lock_hidden1b_to_world_param = ConstraintParameters.create_locked_ext(

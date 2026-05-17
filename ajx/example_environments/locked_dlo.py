@@ -215,7 +215,7 @@ class LockedDLO(DLO):
         self.first_lock = OneBodyConstraint(
             name=f"lock_hidden2a_to_gripper1",
             body="grip_tool1",
-            constraint_type=self.env_settings.constraint_type,
+            constraint_residual=self.env_settings.constraint_residual,
         )
         first_lock_param = ConstraintParameters.create_locked_ext(
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.identity),
@@ -234,7 +234,7 @@ class LockedDLO(DLO):
                 name=f"lock_gripper1_to_dlo",
                 body_a=f"grip_tool1",
                 body_b=f"body0",
-                constraint_type=self.env_settings.constraint_type,
+                constraint_residual=self.env_settings.constraint_residual,
             )
         )
         # [0.531634 m, -0.008073 m, -79.5134] -> 0.0795
@@ -255,7 +255,7 @@ class LockedDLO(DLO):
                     name=f"lock{i}",
                     body_a=f"body{i}",
                     body_b=f"body{i+1}",
-                    constraint_type=self.env_settings.constraint_type,
+                    constraint_residual=self.env_settings.constraint_residual,
                 )
             )
             lock_joint_param.append(
@@ -274,7 +274,7 @@ class LockedDLO(DLO):
                 name="lock_dlo_to_gripper2",
                 body_a=f"body{self.env_settings.n_segments - 1}",
                 body_b="grip_tool2",
-                constraint_type=self.env_settings.constraint_type,
+                constraint_residual=self.env_settings.constraint_residual,
             )
         )
         lock_joint_param.append(
@@ -291,7 +291,7 @@ class LockedDLO(DLO):
         self.last_lock = OneBodyConstraint(
             name=f"lock_gripper2_to_hidden2b",
             body=f"grip_tool2",
-            constraint_type=self.env_settings.constraint_type,
+            constraint_residual=self.env_settings.constraint_residual,
         )
         last_lock_param = ConstraintParameters.create_locked_ext(
             frame_a=Frame(

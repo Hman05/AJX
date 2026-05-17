@@ -3,7 +3,6 @@ import jax.numpy as jnp
 import os
 
 from ajx.group_operations import sparse_blockrow_mul_blockdiag, sparse_blockrow_mul_vec
-from ajx.constraints.base import ConstraintType
 
 
 @jax.jit(static_argnames=("h", "Nit"))
@@ -47,7 +46,7 @@ def projected_gauss_seidel_dense(
         # Projection step
         old_lbda = lbda[c]
         lbda = lbda.at[c].set(
-            jnp.clip(lbda[c] + delta_lbda, lbda_limits[0,c], lbda_limits[1,c])
+            jnp.clip(lbda[c] + delta_lbda, lbda_limits[0, c], lbda_limits[1, c])
         )
 
         # Update step with correct delta lambda
@@ -91,8 +90,8 @@ def projected_gauss_seidel_sparse(
         Nit: number of iterations
     """
 
-    lbda_lower_limits = lbda_limits[0,:]
-    lbda_upper_limits = lbda_limits[1,:]
+    lbda_lower_limits = lbda_limits[0, :]
+    lbda_upper_limits = lbda_limits[1, :]
 
     schur_block_diag_inv = get_inverse_schur_block_diagonal_elements(G, M_inv, Sigma)
     group_row_offsets = get_group_row_offsets(
@@ -102,14 +101,15 @@ def projected_gauss_seidel_sparse(
     # To cache precomputed data. It is unclear though if it improves performance.
     cache_data = []
     for _, group_data in G.row_groups:
-        local_data = {"row_size": group_data.row_size,
-                      "col_sizes": group_data.col_sizes,
-                      "col_offsets": jnp.array(group_data.col_offsets),
-                      "col_sq_offsets": jnp.array(group_data.col_sq_offsets),
-                      }
+        local_data = {
+            "row_size": group_data.row_size,
+            "col_sizes": group_data.col_sizes,
+            "col_offsets": jnp.array(group_data.col_offsets),
+            "col_sq_offsets": jnp.array(group_data.col_sq_offsets),
+        }
         cache_data.append(local_data)
     cache_data = tuple(cache_data)
-    
+
     def constraint_body(group_index, j, group, state):
         """
         This routine is intended to calculate one PGS-iteration per constraint
@@ -131,20 +131,26 @@ def projected_gauss_seidel_sparse(
             group.offset, j, group_row_size, group_col_sizes
         )  # To get data in G from block row j
         qi = q[row_slice_idx]
-        lbda_i = jax.lax.dynamic_slice(lbda, (row_start,), (group_row_size,))  # lbda[row_slice_idx]
+        lbda_i = jax.lax.dynamic_slice(
+            lbda, (row_start,), (group_row_size,)
+        )  # lbda[row_slice_idx]
         sigma_i = Sigma[row_slice_idx]
 
-        Gi_u = sparse_blockrow_mul_vec(
-            Gi, u, group_col_sizes, group_col_offsets[j]
-        )
+        Gi_u = sparse_blockrow_mul_vec(Gi, u, group_col_sizes, group_col_offsets[j])
         ri = qi - Gi_u - sigma_i * lbda_i
         Sii_inv = schur_block_diag_inv[group_index][j]
-        
+
         # Solve for delta lambda and project the multipliers
         delta_lbda_i = Sii_inv @ ri
-        lbda_lower_limit = jax.lax.dynamic_slice(lbda_lower_limits, (row_start,), (group_row_size,))
-        lbda_upper_limit = jax.lax.dynamic_slice(lbda_upper_limits, (row_start,), (group_row_size,))
-        lbda_i_clipped = jnp.clip(lbda_i + delta_lbda_i, lbda_lower_limit, lbda_upper_limit)
+        lbda_lower_limit = jax.lax.dynamic_slice(
+            lbda_lower_limits, (row_start,), (group_row_size,)
+        )
+        lbda_upper_limit = jax.lax.dynamic_slice(
+            lbda_upper_limits, (row_start,), (group_row_size,)
+        )
+        lbda_i_clipped = jnp.clip(
+            lbda_i + delta_lbda_i, lbda_lower_limit, lbda_upper_limit
+        )
         lbda = jax.lax.dynamic_update_slice(lbda, lbda_i_clipped, (row_start,))
 
         delta_lbda_update = lbda_i_clipped - lbda_i
@@ -169,7 +175,11 @@ def projected_gauss_seidel_sparse(
 
     # To initialize the multipliers and the generalized velocity
     lbda = lbda0
-    u = gvel + h * M_inv.mul_vector(f_ext) + M_inv.mul_vector(G.grouped_vector_mul(lbda))
+    u = (
+        gvel
+        + h * M_inv.mul_vector(f_ext)
+        + M_inv.mul_vector(G.grouped_vector_mul(lbda))
+    )
 
     # This is the entry point for the PGS-solver
     u, lbda = jax.lax.fori_loop(0, Nit, pgs_body, (u, lbda))
@@ -206,24 +216,28 @@ def get_inverse_schur_block_diagonal_elements(G, M_inv, Sigma):
             jnp.array(group.col_sq_offsets)[j],
         )
 
-        schur_block = jax.vmap(lambda A, B: A @ B.T)(jnp.stack(Gi_M_inv), jnp.stack(Gi)).sum(axis=0)  # sum([A @ B.T for A, B in zip(Gi_M_inv, Gi)])  # G @ M_inv @ G.T for subset of rows
+        schur_block = jax.vmap(lambda A, B: A @ B.T)(
+            jnp.stack(Gi_M_inv), jnp.stack(Gi)
+        ).sum(
+            axis=0
+        )  # sum([A @ B.T for A, B in zip(Gi_M_inv, Gi)])  # G @ M_inv @ G.T for subset of rows
         sigma_i = jax.lax.dynamic_slice(Sigma, (row_start,), (group.row_size,))
         schur_block = schur_block.at[jnp.diag_indices(group.row_size)].add(sigma_i)
 
-        return jax.lax.dynamic_update_slice(
-                state, schur_block, (j * group.row_size, 0)
-            )
+        return jax.lax.dynamic_update_slice(state, schur_block, (j * group.row_size, 0))
 
     # This produces a tuple of length number of groups consisting of jax arrays with the inverse schur blocks stacked
     schur_block_diag_inv = tuple(
-            jnp.linalg.inv(jax.lax.fori_loop(
+        jnp.linalg.inv(
+            jax.lax.fori_loop(
                 0,
                 num_block_rows,
                 lambda j, state: single_schur_block_body(gi, j, group, state),
-                jnp.zeros((group.row_size * num_block_rows, group.row_size))
-            ).reshape(-1, group.row_size, group.row_size))
-            for gi, (num_block_rows, group) in enumerate(G.row_groups)
+                jnp.zeros((group.row_size * num_block_rows, group.row_size)),
+            ).reshape(-1, group.row_size, group.row_size)
         )
+        for gi, (num_block_rows, group) in enumerate(G.row_groups)
+    )
     return schur_block_diag_inv
 
 
@@ -246,7 +260,8 @@ def update_generalized_velocity(
     vel_update_blocks = [
         jax.lax.dynamic_slice(
             M_inv.data, (col_sq_offsets[i],), (col_sizes[i] ** 2,)
-        ).reshape(col_sizes[i], col_sizes[i]) @ (Gi[i].T @ delta_lbda_update)
+        ).reshape(col_sizes[i], col_sizes[i])
+        @ (Gi[i].T @ delta_lbda_update)
         for i in range(len(Gi))
     ]
     """
@@ -266,6 +281,7 @@ def pgs_grouped_fori_loop(groups, body_fun, init_val):
 
         def body_fun_aug(i, carry):
             return body_fun(group_index, i, group_data, carry)
+
         val = jax.lax.fori_loop(0, count, body_fun_aug, val)
 
     return val

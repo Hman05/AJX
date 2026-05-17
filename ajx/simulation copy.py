@@ -489,8 +489,8 @@ class Simulation:
                 ]
             )
             # Stack constraint types as a jnp.array
-            constraint_types = jnp.array(
-                [constraint.constraint_type for constraint in constraint_group]
+            constraint_residuals = jnp.array(
+                [constraint.constraint_residual for constraint in constraint_group]
             )
 
             # Compute Jacobians and constraint offsets
@@ -499,14 +499,14 @@ class Simulation:
                 state,
                 body_ids,
                 constraint_ids,
-                constraint_types,
+                constraint_residuals,
             )
             default_offsets = jax.vmap(c_func[identifier], (None, None, 0, 0, 0))(
                 param,
                 state,
                 body_ids,
                 constraint_ids,
-                constraint_types,
+                constraint_residuals,
             )
 
             # Copy the Jacobian data from the constraint group to the full Jacobian
