@@ -65,8 +65,8 @@ class Transform(ParameterNode):
         return self.multiply(other.inverse())
 
     @classmethod
-    def unitary(cls):
-        return Transform(jnp.array([0.0, 0.0, 0.0]), math.Rotations.unitary)
+    def identity(cls):
+        return Transform(jnp.array([0.0, 0.0, 0.0]), math.Rotations.identity)
 
 
 @struct.dataclass

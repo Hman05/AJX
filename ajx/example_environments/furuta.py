@@ -58,13 +58,13 @@ class Furuta(Environment):
             "arm2_model", arm2_model, translation=(0.0, com_displacement2, 0.0)
         )
 
-        arm1 = RigidBody("arm1", [("arm1_model", Transform.unitary())])
+        arm1 = RigidBody("arm1", [("arm1_model", Transform.identity())])
         arm1_param = RigidBodyParameters.create(
             mass=0.428,
             inertia_diag=jnp.array([1e-6, 0.012, 0.012]),
             name="arm1",
         )
-        arm2 = RigidBody("arm2", [("arm2_model", Transform.unitary())])
+        arm2 = RigidBody("arm2", [("arm2_model", Transform.identity())])
         arm2_param = RigidBodyParameters.create(
             mass=0.238, inertia_diag=jnp.array([0.0016, 1e-6, 0.0016]), name="arm2"
         )
@@ -173,8 +173,8 @@ class Furuta(Environment):
         self.geometry_list = (arm1_model, arm2_model, ground, stand)
 
         self.extra_geometry = [
-            ("ground", Transform.unitary()),
-            ("stand", Transform.unitary()),
+            ("ground", Transform.identity()),
+            ("stand", Transform.identity()),
         ]
 
     def observation_to_configuration(self, observation, param):

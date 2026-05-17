@@ -48,11 +48,11 @@ class CartPole(Environment):
             color=[0.0, 0.5, 0.5],
         )
 
-        cart = RigidBody("cart", [("cart_box", Transform.unitary())])
+        cart = RigidBody("cart", [("cart_box", Transform.identity())])
         cart_param = RigidBodyParameters.create(
             mass=0.127, inertia_diag=jnp.array([0.02, 0.02, 0.02]), name="cart"
         )
-        self.pendulum = RigidBody("pendulum", [("pendulum_box", Transform.unitary())])
+        self.pendulum = RigidBody("pendulum", [("pendulum_box", Transform.identity())])
         pendulum_param = RigidBodyParameters.create(
             mass=0.5, inertia_diag=jnp.array([0.02, 0.02, 0.02]), name="pendulum"
         )
@@ -152,7 +152,7 @@ class CartPole(Environment):
 
         self.geometry_list = (self.cart_box, self.pendulum_box, self.rail)
 
-        self.extra_geometry = (("rail", Transform.unitary()),)
+        self.extra_geometry = (("rail", Transform.identity()),)
 
     def observation_to_configuration(self, observation, param):
         world_transform = Transform(
@@ -172,7 +172,7 @@ class CartPole(Environment):
 
         initial_conf = self.observation_to_configuration(initial_observations, param)
         initial_gvel = GeneralizedVelocity(jnp.zeros([2, 6]))
-        
+
         # When using the PGS-solver with warm starting, multiplier size needs to be correctly specified for jax.jit compilation to work
         multipliers_size = self.get_multiplier_size()
         multipliers = jnp.zeros([multipliers_size])

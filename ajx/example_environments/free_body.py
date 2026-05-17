@@ -35,7 +35,7 @@ class FreeBody(Environment):
             color=(0.9, 0.2, 0.2),
         )
 
-        self.body = RigidBody("body", [("box", Transform.unitary)])
+        self.body = RigidBody("body", [("box", Transform.identity)])
         body_param = RigidBodyParameters.create(
             mass=1.0, inertia_diag=inertia, name="body"
         )
@@ -67,7 +67,7 @@ class FreeBody(Environment):
         )
 
         self.geometry_list = (self.box, self.ground)
-        self.extra_geometry = [("ground", Transform.unitary())]
+        self.extra_geometry = [("ground", Transform.identity())]
 
     def observation_to_configuration(self, observation, params):
         pos = jnp.zeros([1, 3])

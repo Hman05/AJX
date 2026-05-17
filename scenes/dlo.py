@@ -33,8 +33,8 @@ if __name__ == "__main__":
             inner_radius=0.013,
             density=1000,
             pose_estimate_linear_offsets=marker_offsets,
-            gripper1_offset=Transform(grippermc_to_marker, math.Rotations.unitary),
-            gripper2_offset=Transform(-grippermc_to_marker, math.Rotations.unitary),
+            gripper1_offset=Transform(grippermc_to_marker, math.Rotations.identity),
+            gripper2_offset=Transform(-grippermc_to_marker, math.Rotations.identity),
             loose_end=False,
         ),
     )

@@ -291,7 +291,7 @@ def to_rotation_vector_jvp(primal, tangent):
 
 
 class Rotations:
-    unitary = jnp.array([1.0, 0.0, 0.0, 0.0])
+    identity = jnp.array([1.0, 0.0, 0.0, 0.0])
     z_to_y = quat_from_axis_angle(jnp.array([1.0, 0.0, 0.0]), 0.5 * jnp.pi)
     y_to_z = quat_from_axis_angle(jnp.array([1.0, 0.0, 0.0]), -0.5 * jnp.pi)
     x_to_z = quat_from_axis_angle(jnp.array([0.0, 1.0, 0.0]), 0.5 * jnp.pi)

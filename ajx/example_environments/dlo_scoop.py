@@ -35,8 +35,8 @@ class DLOSettings:
     ):
         segment_length = length / n_segments
 
-        gripper1_offset = Transform.unitary()
-        gripper2_offset = Transform.unitary()
+        gripper1_offset = Transform.identity()
+        gripper2_offset = Transform.identity()
 
         pose_estimate_bodies = []
         pose_estimate_constraints_a = []
@@ -346,7 +346,7 @@ class DLOScoop(Environment):
         arrow = geometry.Model(
             f"arrow",
             arrow_path,
-            rotation=math.Rotations.unitary,
+            rotation=math.Rotations.identity,
             scale=(x_scale, 0.1, 0.1),
             color=(1.0, 0.0, 0.0),
         )
@@ -409,10 +409,10 @@ class DLOScoop(Environment):
         )
         marker1_local_transform = self.env_settings.pose_estimate_offsets[0]
         tool1_to_dlo_frame = Transform(
-            jnp.array([grapple_box_length, 0.0, 0.0]), math.Rotations.unitary
+            jnp.array([grapple_box_length, 0.0, 0.0]), math.Rotations.identity
         )
         tool2_to_dlo_frame = Transform(
-            jnp.array([-0.060425, 0.0, 0.0]), math.Rotations.unitary
+            jnp.array([-0.060425, 0.0, 0.0]), math.Rotations.identity
         )
 
         density = self.env_settings.density
@@ -447,8 +447,8 @@ class DLOScoop(Environment):
 
         grip_tool2 = RigidBody(
             f"grip_tool2",
-            [("shovel", Transform.unitary())],
-            [("shovel", Transform.unitary())],
+            [("shovel", Transform.identity())],
+            [("shovel", Transform.identity())],
         )
         grip_tool2_param = RigidBodyParameters.create(
             mass=0.14 * 0.25 * 0.01 * density * 0.5**3,
@@ -459,9 +459,9 @@ class DLOScoop(Environment):
         cylinder = RigidBody(
             f"cylinder",
             [
-                ("cylinder", Transform.unitary()),
+                ("cylinder", Transform.identity()),
             ],
-            [("cylinder", Transform.unitary())],
+            [("cylinder", Transform.identity())],
         )
         r = 0.03
         h = 0.04
@@ -478,27 +478,27 @@ class DLOScoop(Environment):
             offset_a = bl
             offset_b = -bl
             frame_a_transform = Transform(
-                jnp.array([offset_a, 0.0, 0.0]), math.Rotations.unitary
+                jnp.array([offset_a, 0.0, 0.0]), math.Rotations.identity
             )
             frame_b_transform = Transform(
-                jnp.array([offset_b, 0.0, 0.0]), math.Rotations.unitary
+                jnp.array([offset_b, 0.0, 0.0]), math.Rotations.identity
             )
-            segment_geometry = [("segment_model", Transform.unitary())]
+            segment_geometry = [("segment_model", Transform.identity())]
             debug_geometry = [
                 ("axes_model", frame_a_transform),
                 ("axes_model", frame_b_transform),
-                ("segment_wireframe_model", Transform.unitary()),
+                ("segment_wireframe_model", Transform.identity()),
             ]
             if f"body{i}" in self.env_settings.pose_estimate_bodies:
                 segment_geometry = [
-                    ("segment_model", Transform.unitary()),
-                    ("marker_model", Transform.unitary()),
+                    ("segment_model", Transform.identity()),
+                    ("marker_model", Transform.identity()),
                 ]
                 debug_geometry = [
                     ("axes_model", frame_a_transform),
                     ("axes_model", frame_b_transform),
-                    ("marker_model", Transform.unitary()),
-                    ("segment_wireframe_model", Transform.unitary()),
+                    ("marker_model", Transform.identity()),
+                    ("segment_wireframe_model", Transform.identity()),
                 ]
             r_o = self.env_settings.outer_radius
             r_i = self.env_settings.inner_radius
@@ -531,7 +531,7 @@ class DLOScoop(Environment):
         )
         lock_world_to_hidden1_param = ConstraintParameters.create_locked_ext(
             frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_z),
-            frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.unitary),
+            frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.identity),
             compliance_lin=1e-8,
             compliance_rot=1e-8,
             viscous_compliance_lin=1e-3,
@@ -562,8 +562,8 @@ class DLOScoop(Environment):
             constraint_type=ConstraintType.HINGE.value,
         )
         lock_hidden2a_to_gripper1_param = ConstraintParameters.create_locked(
-            frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.unitary),
-            frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.unitary),
+            frame_a=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.identity),
+            frame_b=Frame(jnp.array([0.0, 0.0, 0.0]), math.Rotations.identity),
             compliance=1e-8,
             viscous_compliance=1e-5,
             damping=2 * self.reference_timestep,
@@ -583,7 +583,7 @@ class DLOScoop(Environment):
         lock_joint_param.append(
             ConstraintParameters.create_locked(
                 frame_a=Frame(tool1_to_dlo_frame.pos, tool1_to_dlo_frame.rot),
-                frame_b=Frame(jnp.array([-bl, 0.0, 0.0]), math.Rotations.unitary),
+                frame_b=Frame(jnp.array([-bl, 0.0, 0.0]), math.Rotations.identity),
                 compliance=1e-8,
                 viscous_compliance=1e-5,
                 damping=2 * self.reference_timestep,
@@ -605,10 +605,10 @@ class DLOScoop(Environment):
             lock_joint_param.append(
                 ConstraintParameters.create_locked(
                     frame_a=Frame(
-                        jnp.array([offset_a, 0.0, 0.0]), math.Rotations.unitary
+                        jnp.array([offset_a, 0.0, 0.0]), math.Rotations.identity
                     ),
                     frame_b=Frame(
-                        jnp.array([offset_b, 0.0, 0.0]), math.Rotations.unitary
+                        jnp.array([offset_b, 0.0, 0.0]), math.Rotations.identity
                     ),
                     compliance=1e-5,
                     viscous_compliance=1e-5,
@@ -643,8 +643,8 @@ class DLOScoop(Environment):
             constraint_type=ConstraintType.PRISMATIC.value,
         )
         lock_gripper2_to_cylinder_param = ConstraintParameters.create_locked(
-            frame_a=Frame(jnp.array([0.03, 0.0, -0.004686]), math.Rotations.unitary),
-            frame_b=Frame(jnp.array([0.0, 0.0, -0.04]), math.Rotations.unitary),
+            frame_a=Frame(jnp.array([0.03, 0.0, -0.004686]), math.Rotations.identity),
+            frame_b=Frame(jnp.array([0.0, 0.0, -0.04]), math.Rotations.identity),
             compliance=1e-8,
             viscous_compliance=1e-5,
             damping=2 * self.reference_timestep,
@@ -771,10 +771,10 @@ class DLOScoop(Environment):
         vel_quat = math.matrix_to_quaternion(rot_mat)
 
         self.extra_geometry = [
-            ("ground", Transform.unitary()),
-            ("marker_model", Transform.unitary().replace(pos=self.target_pos)),
-            ("arrow", Transform.unitary().replace(pos=self.target_pos, rot=vel_quat)),
-            ("bin", Transform.unitary().replace(pos=self.bin_pos)),
+            ("ground", Transform.identity()),
+            ("marker_model", Transform.identity().replace(pos=self.target_pos)),
+            ("arrow", Transform.identity().replace(pos=self.target_pos, rot=vel_quat)),
+            ("bin", Transform.identity().replace(pos=self.bin_pos)),
         ]
 
     def create_neutral_configuration(self, observation, param):
@@ -788,7 +788,7 @@ class DLOScoop(Environment):
                     0.0,
                 ]
             ),
-            math.Rotations.unitary,  # This should not be required...
+            math.Rotations.identity,  # This should not be required...
         )
 
         body_transforms = []
