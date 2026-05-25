@@ -10,22 +10,30 @@ import ajx.example_graphics.geometry as geometry
 DoublePendulumSparseParam = create_parameter_node(
     "DoublePendulumSparseParam", ("electric_motor", "offset_param")
 )
+from flax import struct
+
+
+@struct.dataclass
+class DoublePendulumSettings:
+    reference_timestep: Optional[float] = None
+    m1: float = 1.0
+    m2: float = 1.0
 
 
 class DoublePendulum(Environment):
     def __init__(
         self,
         sim_settings: SimulationSettings,
-        reference_timestep: Optional[float] = None,
+        env_settings: DoublePendulumSettings,
     ):
         # Double Pendulum
 
         self.n_control = 1
         self.timestep = sim_settings.timestep
-        self.env_settings = reference_timestep
+        self.env_settings = env_settings
 
-        self.reference_timestep = reference_timestep
-        if not reference_timestep:
+        self.reference_timestep = env_settings.reference_timestep
+        if not self.reference_timestep:
             self.reference_timestep = sim_settings.timestep
 
         self.camera_pos = jnp.array([0.0, 5.0, 0.0])
@@ -60,7 +68,7 @@ class DoublePendulum(Environment):
         )
 
         arm1 = RigidBody("arm1", [("arm1_model", Transform.identity())])
-        m1 = 1.0
+        m1 = self.env_settings.m1
         Jz = 0.5 * m1 * 0.1**2
         Jxy = 1 / 12 * m1 * (3 * 0.1**2 + l_1to1 + l_1to2)
         arm1_param = RigidBodyParameters.create(
@@ -69,7 +77,7 @@ class DoublePendulum(Environment):
             name="arm1",
         )
 
-        m2 = 1.0
+        m2 = self.env_settings.m2
         Jz = 0.5 * m2 * 0.1**2
         Jxy = 1 / 12 * m2 * (3 * 0.1**2 + l_2to1 + 1.0)
         arm2 = RigidBody("arm2", [("arm2_model", Transform.identity())])

@@ -2,7 +2,10 @@ from ajx.example_graphics.environment_scene import EnvironmentScene
 from ajx.example_graphics.application import Application
 
 
-from ajx.example_environments.double_pendulum import DoublePendulum
+from ajx.example_environments.double_pendulum import (
+    DoublePendulum,
+    DoublePendulumSettings,
+)
 
 from ajx import *
 
@@ -10,7 +13,8 @@ if __name__ == "__main__":
     timestep = 0.016667
 
     environment = DoublePendulum(
-        sim_settings=SimulationSettings(timestep, True, Solver.DENSE_LINEAR)
+        sim_settings=SimulationSettings(timestep, True, Solver.DENSE_LINEAR),
+        env_settings=DoublePendulumSettings(None, 1.0, 1.0),
     )
 
     env_param = environment.default_param
