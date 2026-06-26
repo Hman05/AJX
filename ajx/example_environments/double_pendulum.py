@@ -218,3 +218,19 @@ class DoublePendulum(Environment):
             "arrow right/l: move clockwise",
             "arrow left/h: move counterclockwise",
         ]
+
+    def unflatten(self, flat_state):
+        sizes = jnp.array([2 * 3, 2 * 4, 2 * 6])
+
+        offsets = jnp.cumulative_sum(sizes, include_initial=True)
+
+        conf_pos = flat_state[offsets[0] : offsets[1]].reshape(2, 3)
+        conf_rot = flat_state[offsets[1] : offsets[2]].reshape(2, 4)
+        gvel = flat_state[offsets[2] : offsets[3]].reshape(2, 6)
+        multipliers_size = self.get_multiplier_size()
+        multipliers = jnp.zeros([multipliers_size])
+        return State(
+            Configuration(conf_pos, conf_rot),
+            GeneralizedVelocity(gvel),
+            multipliers=multipliers
+        )
