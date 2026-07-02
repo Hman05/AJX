@@ -233,23 +233,51 @@ class ParameterNode:
                 raise Exception
 
         return new
-
+    
     def log_map(self, other: ParameterNode) -> jax.Array:
-        residuals = []
-        for f in fields(self):
-            self_value = getattr(self, f.name)
-            other_value = getattr(other, f.name)
-            if isinstance(self_value, (jax.Array, float)):
-                residual = (self_value - other_value).flatten()
-            elif isinstance(self_value, ParameterNode):
-                residual = self_value.log_map(other_value)
-            elif f.metadata.get("pytree_node") is False:
-                continue
-            else:
-                raise Exception
-            residuals.append(residual)
+        """
+        Return the flattened tangent-space difference between this node and another node.
 
-        return jnp.concatenate(residuals)
+        If the node defines ``tangent_restrictions``, only those restricted tangent
+        coordinates are included. This keeps ``log_map`` consistent with
+        ``tangent_size`` and ``retract``: the returned residual has the same length
+        as the flattened tangent update accepted by ``retract``.
+
+        If the node does not define ``tangent_restrictions``, all dynamic dataclass
+        fields are included recursively. Static/non-pytree fields are skipped.
+
+        For array and scalar leaves, the residual is computed as ``self - other``.
+        For nested ``ParameterNode`` leaves, their own ``log_map`` implementation is
+        used, so nested tangent restrictions are respected as well.
+        """
+
+        def leaf_log_map(self_value, other_value, name):
+            if isinstance(self_value, float):
+                return (jnp.asarray(self_value) - jnp.asarray(other_value)).reshape(-1)
+            elif isinstance(self_value, jax.Array):
+                return (self_value - other_value).reshape(-1)
+            elif isinstance(self_value, ParameterNode):
+                return self_value.log_map(other_value)
+            raise TypeError(
+                f"Unsupported log_map field/key '{name}' of type {type(self_value)}"
+            )
+
+        residuals = []
+        if hasattr(self, "tangent_restrictions"):
+            for key in self.tangent_restrictions:
+                self_value = self.get_value_at_path(key)
+                other_value = other.get_value_at_path(key)
+                residuals.append(leaf_log_map(self_value, other_value, key))
+        else:
+            for f in fields(self):
+                if f.metadata.get("pytree_node") is False:
+                    continue
+                self_value = getattr(self, f.name)
+                other_value = getattr(other, f.name)
+                residuals.append(leaf_log_map(self_value, other_value, f.name))
+        if not residuals:
+            return jnp.zeros((0,))
+        return jnp.concatenate(residuals, axis=0)
 
     def tree_retract(self, delta: Dict) -> ParameterNode:
         """
