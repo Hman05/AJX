@@ -7,7 +7,7 @@ from jax import jit
 import jax.numpy as jnp
 
 from enum import Enum
-from ajx.definitions import Transform, State
+from ajx.definitions import GeneralizedVelocity, Transform, State
 from ajx.param import SimulationParameters
 from typing import Union, Tuple
 from functools import partial
@@ -329,6 +329,37 @@ class OneBodyConstraint(Constraint):
         theta = jnp.dot(axis_angle, axis)
         free_hinge = theta * (self.constraint_residual == 0)
         return free_hinge + free_prismatic
+
+    @partial(jit, static_argnums=0)
+    def get_free_degree_velocity(
+        self,
+        state: State,
+        gvel: GeneralizedVelocity,
+        param: SimulationParameters,
+    ) -> jax.Array:
+        body_b_id = param.rigid_body_param.names.index(self.body)
+        constraint_id = param.constraint_param.names.index(self.name)
+
+        body_b_rot = state.conf.rot[body_b_id]
+        body_a_rot = jnp.array([1.0, 0.0, 0.0, 0.0])
+
+        frame_a_rot0 = param.constraint_param.frame_a.rotation[constraint_id]
+        frame_a_rot = math.quat_mul(body_a_rot, frame_a_rot0)
+
+        frame_b_pos0 = param.constraint_param.frame_b.position[constraint_id]
+        d_b = math.rotate_vector(body_b_rot, frame_b_pos0)
+
+        point_velocity_b = gvel.vel[body_b_id] + jnp.cross(
+            gvel.ang[body_b_id], d_b
+        )
+        v_a = math.rotation_matrix(frame_a_rot)[:, 1]
+        velocity = jnp.dot(v_a, -point_velocity_b)
+        free_prismatic_velocity = velocity * (self.constraint_residual == 1)
+
+        axis = math.rotation_matrix(frame_a_rot)[:, 0]
+        angular_velocity = jnp.dot(axis, gvel.ang[body_b_id])
+        free_hinge_velocity = angular_velocity * (self.constraint_residual == 0)
+        return free_hinge_velocity + free_prismatic_velocity
 
     def place_other(
         self, param: SimulationParameters, body_transform: Transform, x: float

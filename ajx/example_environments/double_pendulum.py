@@ -18,6 +18,7 @@ class DoublePendulumSettings:
     reference_timestep: Optional[float] = None
     m1: float = 1.0
     m2: float = 1.0
+    sensors: str = "rotary_encoders"
 
 
 class DoublePendulum(Environment):
@@ -137,8 +138,12 @@ class DoublePendulum(Environment):
 
         rotary_decoder1 = RotaryEncoder("rotary_encoder1", self.hinge1)
         rotary_decoder2 = RotaryEncoder("rotary_encoder2", self.hinge2)
+        angular_encoder1 = AngularVelocitySensor("velocity_encoder1", self.hinge1)
+        angular_encoder2 = AngularVelocitySensor("velocity_encoder2", self.hinge2)
 
         sensors = (rotary_decoder1, rotary_decoder2)
+        if self.env_settings.sensors == "rotary_and_velocity_encoders":
+            sensors =  (rotary_decoder1, rotary_decoder2, angular_encoder1, angular_encoder2)
 
         self.sim = Simulation(
             sim_settings,
