@@ -201,40 +201,23 @@ def get_inverse_schur_block_diagonal_elements(G, M_inv, Sigma):
         G
     )  # Row offset for each group in the actual dense matrix G
 
-    def single_schur_block_body(group_index, j, group, state):
-        row_start = (
-            group_row_offsets[group_index] + j * group.row_size
-        )  # Row start index in full matrix
+    def compute_group_schur_blocks(group_index, group, num_block_rows):
+        
+        def compute_schur_block(j):
+            Gi = G.get_row_from_group(group.offset, j, group.row_size, group.col_sizes)
+            Gi_M_inv = sparse_blockrow_mul_blockdiag(Gi, M_inv.data, group.col_sizes, jnp.array(group.col_sq_offsets)[j])
+            Sii = jax.vmap(lambda A, B: A @ B.T)(jnp.stack(Gi_M_inv), jnp.stack(Gi)).sum(axis=0)
+            row_start = group_row_offsets[group_index] + j * group.row_size
+            sigma_i = jax.lax.dynamic_slice(Sigma, (row_start,), (group.row_size,))
+            return Sii + jnp.diag(sigma_i)
 
-        Gi = G.get_row_from_group(
-            group.offset, j, group.row_size, group.col_sizes
-        )  # To get data in G from block row j
-        Gi_M_inv = sparse_blockrow_mul_blockdiag(
-            Gi,
-            M_inv.data,
-            group.col_sizes,
-            jnp.array(group.col_sq_offsets)[j],
-        )
-
-        schur_block = jax.vmap(lambda A, B: A @ B.T)(
-            jnp.stack(Gi_M_inv), jnp.stack(Gi)
-        ).sum(
-            axis=0
-        )  # sum([A @ B.T for A, B in zip(Gi_M_inv, Gi)])  # G @ M_inv @ G.T for subset of rows
-        sigma_i = jax.lax.dynamic_slice(Sigma, (row_start,), (group.row_size,))
-        schur_block = schur_block.at[jnp.diag_indices(group.row_size)].add(sigma_i)
-
-        return jax.lax.dynamic_update_slice(state, schur_block, (j * group.row_size, 0))
+        schur_blocks = jax.vmap(compute_schur_block)(jnp.arange(num_block_rows))
+        return schur_blocks
 
     # This produces a tuple of length number of groups consisting of jax arrays with the inverse schur blocks stacked
     schur_block_diag_inv = tuple(
         jnp.linalg.inv(
-            jax.lax.fori_loop(
-                0,
-                num_block_rows,
-                lambda j, state: single_schur_block_body(gi, j, group, state),
-                jnp.zeros((group.row_size * num_block_rows, group.row_size)),
-            ).reshape(-1, group.row_size, group.row_size)
+            compute_group_schur_blocks(gi, group, num_block_rows)
         )
         for gi, (num_block_rows, group) in enumerate(G.row_groups)
     )
