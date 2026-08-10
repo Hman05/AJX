@@ -372,6 +372,7 @@ class Simulation:
 
             # To compute solution
             lbda0 = state.multipliers
+            nc = Sigma_data.shape[0]
             qdot_next, lbda = projected_gauss_seidel_dense(
                 gvel,
                 lbda0,
