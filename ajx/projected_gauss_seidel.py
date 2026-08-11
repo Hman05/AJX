@@ -99,8 +99,9 @@ def projected_gauss_seidel_sparse(
 
     # To cache precomputed data. It is unclear though if it improves performance.
     group_meta_data = []
-    for group_index, group_data in G.row_groups:
+    for group_index, (num_block_rows, group_data) in enumerate(G.row_groups):
         local_data = {
+            "num_block_rows": num_block_rows,
             "group_row_start": group_row_offsets[group_index],
             "n_blocks": group_data.n_blocks,
             "row_size": group_data.row_size,
@@ -246,7 +247,7 @@ def update_generalized_velocity(
         U: updated generalized velocity
     """
     # Here we make use of the transposed calculation and reuse stored data Gi_M_inv to save time. Relies on that M_inv is symmetric which is assumed.
-    vel_update_blocks = [delta_lbda_update @ Gi_M_inv[j] for j in range(len(Gi_M_inv))]
+    vel_update_blocks = [delta_lbda_update.T @ block for block in Gi_M_inv]
     for j, (start_idx, size) in enumerate(zip(col_offsets, col_sizes)):
         new_u = jax.lax.dynamic_slice(u, (start_idx,), (size,)) + vel_update_blocks[j]
         u = jax.lax.dynamic_update_slice(u, new_u, (start_idx,))
