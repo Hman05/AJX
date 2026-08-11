@@ -67,8 +67,8 @@ def projected_gauss_seidel_dense(
     u, lbda = jax.lax.fori_loop(0, Nit, pgs_body, (u, lbda))
     return u, lbda
 
-
-@jax.jit(static_argnames=("h", "Nit"))
+# Donate argnames allows for overwriting these buffers if needed for performance.
+@jax.jit(static_argnames=("h", "Nit"), donate_argnames=("G", "M_inv", "Sigma", "q"))
 def projected_gauss_seidel_sparse(
     gvel, lbda0, G, M_inv, Sigma, h, f_ext, q, lbda_limits, Nit
 ):
@@ -99,8 +99,9 @@ def projected_gauss_seidel_sparse(
 
     # To cache precomputed data. It is unclear though if it improves performance.
     group_meta_data = []
-    for _, group_data in G.row_groups:
+    for group_index, group_data in G.row_groups:
         local_data = {
+            "group_row_start": group_row_offsets[group_index],
             "n_blocks": group_data.n_blocks,
             "row_size": group_data.row_size,
             "col_sizes": group_data.col_sizes,
@@ -111,7 +112,7 @@ def projected_gauss_seidel_sparse(
     group_meta_data = tuple(group_meta_data)
 
     # To precompute blocks Gi, and inverse schur diagonal blocks.
-    G_blocks, schur_block_diag_inv = precompute_row_blocks_data(G, M_inv, Sigma, group_meta_data)
+    G_blocks, schur_block_diag_inv, Gi_M_inv_blocks = precompute_row_blocks_data(G, M_inv, Sigma, group_meta_data)
 
     def constraint_body(group_index, j, group, state):
         """
@@ -119,24 +120,25 @@ def projected_gauss_seidel_sparse(
         """
         u, lbda = state
         
-        group_cache_data = group_meta_data[group_index]
-        group_col_offsets = group_cache_data["col_offsets"]
-        group_col_sq_offsets = group_cache_data["col_sq_offsets"]
-        group_row_size = group_cache_data["row_size"]
-        group_col_sizes = group_cache_data["col_sizes"]
+        gmd = group_meta_data[group_index]
+        group_col_offsets = gmd["col_offsets"]
+        group_col_sq_offsets = gmd["col_sq_offsets"]
+        group_row_size = gmd["row_size"]
+        group_col_sizes = gmd["col_sizes"]
 
         # Indexing the rows of the jth block in group
         row_start = (
-            group_row_offsets[group_index] + j * group_row_size
+            gmd["group_row_start"] + j * group_row_size
         )  # Row start index in full matrix
 
         #Gi = G.get_row_from_group(group.offset, j, group_row_size, group_col_sizes)  # To get data in G from block row j
         Gi = tuple(blocks[j] for blocks in G_blocks[group_index])
+        Gi_M_inv = tuple(blocks[j] for blocks in Gi_M_inv_blocks[group_index])
         qi = jax.lax.dynamic_slice(q, (row_start,), (group_row_size,))
         lbda_i = jax.lax.dynamic_slice(
             lbda, (row_start,), (group_row_size,)
         )  # lbda[row_slice_idx]
-        sigma_i = jax.lax.dynamic_slice(Sigma, (row_start,), (group_row_size,))
+        sigma_i = jax.lax.dynamic_slice(Sigma, (row_start,), (group_row_size,))    
 
         Gi_u = sparse_blockrow_mul_vec(Gi, u, group_col_sizes, group_col_offsets[j])
         ri = qi - Gi_u - sigma_i * lbda_i
@@ -158,8 +160,7 @@ def projected_gauss_seidel_sparse(
         delta_lbda_update = lbda_i_clipped - lbda_i
         u = update_generalized_velocity(
             u,
-            M_inv,
-            Gi,
+            Gi_M_inv,
             delta_lbda_update,
             group_col_sizes,
             group_col_offsets[j],
@@ -199,52 +200,43 @@ def precompute_row_blocks_data(G, M_inv, Sigma, group_meta_data):
         block_cache: single tuple of the same length as the number of groups containing a tuple of Gi blocks per group
     """
 
-    group_row_offsets = get_group_row_offsets(
-        G
-    )  # Row offset for each group in the actual dense matrix G
-
     G_row_blocks = []
     schur_block_diag_inv = []
+    Gi_Minv_blocks = []
     for group_index, (num_block_rows, group) in enumerate(G.row_groups):
         gmd = group_meta_data[group_index]
         def extract(j):
             Gi = G.get_row_from_group(group.offset, j, gmd["row_size"], gmd["col_sizes"])
             Gi_M_inv = sparse_blockrow_mul_blockdiag(Gi, M_inv.data, gmd["col_sizes"], gmd["col_sq_offsets"][j])
             Sii = jax.vmap(lambda A, B: A @ B.T)(jnp.stack(Gi_M_inv), jnp.stack(Gi)).sum(axis=0)
-            row_start = group_row_offsets[group_index] + j * gmd["row_size"]
+            row_start = gmd["group_row_start"] + j * gmd["row_size"]
             sigma_i = jax.lax.dynamic_slice(Sigma, (row_start,), (gmd["row_size"],))
-            return Gi, Sii + jnp.diag(sigma_i)
+            return Gi, Sii + jnp.diag(sigma_i), Gi_M_inv
         
-        Gi, Sii = jax.vmap(extract)(jnp.arange(num_block_rows))
+        Gi, Sii, Gi_M_inv = jax.vmap(extract)(jnp.arange(num_block_rows))
         G_row_blocks.append(Gi)
         schur_block_diag_inv.append(jnp.linalg.inv(Sii))
-    
-    return tuple(G_row_blocks), tuple(schur_block_diag_inv)
+        Gi_Minv_blocks.append(Gi_M_inv)
+
+    return tuple(G_row_blocks), tuple(schur_block_diag_inv), tuple(Gi_Minv_blocks)
 
 
 def update_generalized_velocity(
-    u, M_inv, Gi, delta_lbda_update, col_sizes, col_offsets, col_sq_offsets
+    u, Gi_M_inv, delta_lbda_update, col_sizes, col_offsets, col_sq_offsets
 ):
     """
     INPUTS:
         u: jax array of size nb x 1, generalized velocity.
-        M_inv: ajx.block_sparse.SVBDMatrix, inverse mass matrix
-        Gi: list of constraint jacobian blocks
+        Gi_M_inv: list of constraint jacobian blocks multiplied by mass matrix inverse.
         delta_lbda_update: jax array of size r x 1, multiplier update increment
-        col_sizes: list of column sizes for each of the constraint jacobian blocks (See RowGroup class in VBRMatrix)
+        col_sizes: list of column sizes for each of the Gi_M_inv blocks (See RowGroup class in VBRMatrix)
         col_offsets: list of column offset for each block (See RowGroup class in VBRMatrix)
         col_sq_offsets: list of squared column offset for each block (See RowGroup class in VBRMatrix)
     OUTPUTS:
         U: updated generalized velocity
     """
-
-    vel_update_blocks = [
-        jax.lax.dynamic_slice(
-            M_inv.data, (col_sq_offsets[i],), (col_sizes[i] ** 2,)
-        ).reshape(col_sizes[i], col_sizes[i])
-        @ (Gi[i].T @ delta_lbda_update)
-        for i in range(len(Gi))
-    ]
+    # Here we make use of the transposed calculation and reuse stored data Gi_M_inv to save time. Relies on that M_inv is symmetric which is assumed.
+    vel_update_blocks = [delta_lbda_update @ Gi_M_inv[j] for j in range(len(Gi_M_inv))]
     for j, (start_idx, size) in enumerate(zip(col_offsets, col_sizes)):
         new_u = jax.lax.dynamic_slice(u, (start_idx,), (size,)) + vel_update_blocks[j]
         u = jax.lax.dynamic_update_slice(u, new_u, (start_idx,))
