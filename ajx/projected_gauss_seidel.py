@@ -28,6 +28,7 @@ def projected_gauss_seidel_dense(
     """
 
     nc = G.shape[0]
+    res = jnp.zeros([nc,])
 
     # To precompute M^-1 @ G^T
     M_inv_GT = M_inv @ G.T
@@ -39,9 +40,10 @@ def projected_gauss_seidel_dense(
         """
         This is the inner loop body, handling the update of lbda for each constraint
         """
-        u, lbda = state
+        u, lbda, res = state
         r = q[c] - jnp.dot(G[c, :], u) - Sigma[c] * lbda[c]
         delta_lbda = jnp.divide(r, S_diag[c])
+        res[c] = r
 
         # Projection step
         old_lbda = lbda[c]
@@ -53,7 +55,7 @@ def projected_gauss_seidel_dense(
         delta_lbda_update = lbda[c] - old_lbda
         u = u + M_inv_GT[:, c] * delta_lbda_update
 
-        return (u, lbda)
+        return (u, lbda, res)
 
     def pgs_body(j, state):
         """
@@ -64,8 +66,8 @@ def projected_gauss_seidel_dense(
     lbda = lbda0
     u = gvel + h * M_inv @ f_ext + M_inv_GT @ lbda
 
-    u, lbda = jax.lax.fori_loop(0, Nit, pgs_body, (u, lbda))
-    return u, lbda
+    u, lbda, res = jax.lax.fori_loop(0, Nit, pgs_body, (u, lbda, res))
+    return u, lbda, res
 
 # Donate argnames allows for overwriting these buffers if needed for performance.
 @jax.jit(static_argnames=("h", "Nit"), donate_argnames=("G", "M_inv", "Sigma", "q"))
@@ -120,7 +122,7 @@ def projected_gauss_seidel_sparse(
         """
         This routine is intended to calculate one PGS-iteration per constraint
         """
-        u, lbda = state
+        u, lbda, res, is_last_iteration = state
         
         gmd = group_meta_data[group_index]
         group_col_offsets = gmd["col_offsets"]
@@ -145,6 +147,9 @@ def projected_gauss_seidel_sparse(
         Gi_u = sparse_blockrow_mul_vec(Gi, u, group_col_sizes, group_col_offsets[j])
         ri = qi - Gi_u - sigma_i * lbda_i
 
+        # To store the residual only on the last PGS-iteration
+        res = jax.lax.cond(is_last_iteration, lambda _: jax.lax.dynamic_update_slice(res, ri, (row_start,)), lambda _: res, operand=None)
+        
         #Sii_inv = schur_block_diag_inv[group_index][j]
         Qii, Rii = tuple(blocks[j] for blocks in schur_QR_factors[group_index])
 
@@ -172,15 +177,16 @@ def projected_gauss_seidel_sparse(
             group_col_offsets[j],
             group_col_sq_offsets[j],
         )
-        return (u, lbda)
+        return (u, lbda, res, is_last_iteration)
 
     def pgs_body(j, state):
         """
         This is the outer loop body, handling the 'Nit' iterations.
         The grouped_fori_loop, returns the updated state = (u, lbda) after one pgs-iteration.
         """
-        u, lbda = state
-        return pgs_grouped_fori_loop(G.row_groups, constraint_body, (u, lbda))
+        u, lbda, res = state
+        u, lbda, res, _ = pgs_grouped_fori_loop(G.row_groups, constraint_body, (u, lbda, res, j == (Nit - 1)))
+        return u, lbda, res
 
     # To initialize the multipliers and the generalized velocity
     lbda = lbda0
@@ -189,11 +195,12 @@ def projected_gauss_seidel_sparse(
         + h * M_inv.mul_vector(f_ext)
         + M_inv.mul_vector(G.grouped_vector_mul(lbda))
     )
+    res = jnp.zeros_like(lbda)
 
     # This is the entry point for the PGS-solver
-    u, lbda = jax.lax.fori_loop(0, Nit, pgs_body, (u, lbda))
+    u, lbda, res = jax.lax.fori_loop(0, Nit, pgs_body, (u, lbda, res))
 
-    return u, lbda
+    return u, lbda, res
 
 
 def precompute_row_blocks_data(G, M_inv, Sigma, group_meta_data):
