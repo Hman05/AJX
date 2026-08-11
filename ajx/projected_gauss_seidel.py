@@ -112,7 +112,8 @@ def projected_gauss_seidel_sparse(
     group_meta_data = tuple(group_meta_data)
 
     # To precompute blocks Gi, and inverse schur diagonal blocks.
-    G_blocks, schur_block_diag_inv, Gi_M_inv_blocks = precompute_row_blocks_data(G, M_inv, Sigma, group_meta_data)
+    G_blocks, schur_QR_factors, Gi_M_inv_blocks = precompute_row_blocks_data(G, M_inv, Sigma, group_meta_data)
+
 
     def constraint_body(group_index, j, group, state):
         """
@@ -142,10 +143,14 @@ def projected_gauss_seidel_sparse(
 
         Gi_u = sparse_blockrow_mul_vec(Gi, u, group_col_sizes, group_col_offsets[j])
         ri = qi - Gi_u - sigma_i * lbda_i
-        Sii_inv = schur_block_diag_inv[group_index][j]
+
+        #Sii_inv = schur_block_diag_inv[group_index][j]
+        Qii, Rii = tuple(blocks[j] for blocks in schur_QR_factors[group_index])
 
         # Solve for delta lambda and project the multipliers
-        delta_lbda_i = Sii_inv @ ri
+        delta_lbda_i = jax.scipy.linalg.solve_triangular(Rii, Qii.T @ ri)
+        #delta_lbda_i = Sii_inv @ ri
+
         lbda_lower_limit = jax.lax.dynamic_slice(
             lbda_lower_limits, (row_start,), (group_row_size,)
         )
@@ -201,7 +206,8 @@ def precompute_row_blocks_data(G, M_inv, Sigma, group_meta_data):
     """
 
     G_row_blocks = []
-    schur_block_diag_inv = []
+    #schur_block_diag_inv = []
+    QR_factors = []
     Gi_Minv_blocks = []
     for group_index, (num_block_rows, group) in enumerate(G.row_groups):
         gmd = group_meta_data[group_index]
@@ -212,13 +218,17 @@ def precompute_row_blocks_data(G, M_inv, Sigma, group_meta_data):
             row_start = gmd["group_row_start"] + j * gmd["row_size"]
             sigma_i = jax.lax.dynamic_slice(Sigma, (row_start,), (gmd["row_size"],))
             return Gi, Sii + jnp.diag(sigma_i), Gi_M_inv
-        
+
         Gi, Sii, Gi_M_inv = jax.vmap(extract)(jnp.arange(num_block_rows))
         G_row_blocks.append(Gi)
-        schur_block_diag_inv.append(jnp.linalg.inv(Sii))
+        QR_factors.append(jnp.linalg.qr(Sii))
+        #schur_block_diag_inv.append(jnp.linalg.inv(Sii))
         Gi_Minv_blocks.append(Gi_M_inv)
 
-    return tuple(G_row_blocks), tuple(schur_block_diag_inv), tuple(Gi_Minv_blocks)
+        #cond_i = jax.vmap(jnp.linalg.cond)(Sii)
+        #jax.debug.print("{v}", v=cond_i)
+
+    return tuple(G_row_blocks), tuple(QR_factors), tuple(Gi_Minv_blocks)
 
 
 def update_generalized_velocity(

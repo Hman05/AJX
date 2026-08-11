@@ -344,7 +344,7 @@ class DLOAttached(Environment):
             linear_stiffness=PositiveParam(jnp.ones(6) * 1e5),
             # compliance=jnp.ones(6) * 1e-5,
             quadratic_stiffness=PositiveParam(jnp.ones(6) * 0.0),
-            damping=jnp.ones(6) * 2 * self.sim.settings.timestep,
+            damping=jnp.ones(6) * 2 * self.reference_timestep,
             is_velocity=jnp.zeros(6, dtype=bool),
         )
 
