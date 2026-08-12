@@ -33,14 +33,14 @@ class Environment(ABC):
         return jnp.concatenate(residual_list)
 
     def observe_state(self, state, u, param):
-        state, ((qdot_next, mul), code) = self.sim.pre_step(state, u, param)
+        state, ((qdot_next, mul, _), code) = self.sim.pre_step(state, u, param)
         return self.sim.observe(state, qdot_next, param)
 
     def observe_state_nostep(self, state, u, param):
         return self.sim.observe(state, None, param)
 
     def step(self, state, action, param):
-        state, ((qdot_next, multipliers), code) = self.sim.pre_step(
+        state, ((qdot_next, multipliers, _), code) = self.sim.pre_step(
             state, action, param
         )
         observation = self.sim.observe(state, qdot_next, param)
@@ -48,11 +48,24 @@ class Environment(ABC):
         return new_state, observation
 
     def step_state(self, state, action, param):
-        state, ((qdot_next, multipliers), code) = self.sim.pre_step(
+        state, ((qdot_next, multipliers, _), code) = self.sim.pre_step(
             state, action, param
         )
         new_state = self.sim.post_step(state, qdot_next, multipliers)
         return new_state
+
+    def step_residual(self, state, action, param):
+        """
+        Step the system state one step forward in time, and return the solver residual in addition to the state.
+        OUTPUTS:
+            new_state: Instance of ajx.definitions.State, the updated state.
+            res: jax.Array, the solver residual from the last step.
+        """
+        state, ((qdot_next, multipliers, res), code) = self.sim.pre_step(
+            state, action, param
+        )
+        new_state = self.sim.post_step(state, qdot_next, multipliers)
+        return new_state, res
 
     def get_multiplier_names(self):
         return [

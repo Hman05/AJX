@@ -148,7 +148,12 @@ def projected_gauss_seidel_sparse(
         ri = qi - Gi_u - sigma_i * lbda_i
 
         # To store the residual only on the last PGS-iteration
-        res = jax.lax.cond(is_last_iteration, lambda _: jax.lax.dynamic_update_slice(res, ri, (row_start,)), lambda _: res, operand=None)
+        res = jax.lax.cond(
+            is_last_iteration, 
+            lambda args: jax.lax.dynamic_update_slice(args[0], args[1], (args[2],)), 
+            lambda args: args[0], 
+            (res, ri, row_start)
+        )
         
         #Sii_inv = schur_block_diag_inv[group_index][j]
         Qii, Rii = tuple(blocks[j] for blocks in schur_QR_factors[group_index])

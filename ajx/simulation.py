@@ -339,6 +339,7 @@ class Simulation:
         M_stacked, M_inv, G, Sigma_data, b_data = self._assemble_blocks(state, param)
         n_rb_dof = 6 * state.gvel.data.shape[0]
         constraint_metadata = self._assemble_constraint_metadata()
+        res = jnp.zeros_like(Sigma_data) # To assign a default residual that is returned if the solver does not return the residual.
 
         if self.settings.solver == Solver.SPARSE_LINEAR:
             S_sparse, rsi_dict = self._schur_reduction(G, M_inv, Sigma_data)
@@ -373,7 +374,7 @@ class Simulation:
             # To compute solution
             lbda0 = state.multipliers
             nc = Sigma_data.shape[0]
-            qdot_next, lbda = projected_gauss_seidel_dense(
+            qdot_next, lbda, res = projected_gauss_seidel_dense(
                 gvel,
                 lbda0,
                 G_dense,
@@ -390,7 +391,7 @@ class Simulation:
         elif self.settings.solver == Solver.SPARSE_PGS:
             lbda0 = state.multipliers
             nc = Sigma_data.shape[0]
-            qdot_next, lbda = projected_gauss_seidel_sparse(
+            qdot_next, lbda, res = projected_gauss_seidel_sparse(
                 gvel,
                 lbda0,
                 G,
@@ -410,7 +411,7 @@ class Simulation:
         gvel_next = GeneralizedVelocity(
             qdot_next[:n_rb_dof].reshape(-1, 6), qdot_next[n_rb_dof:]
         )
-        return (gvel_next, lbda), code
+        return (gvel_next, lbda, res), code
 
     def _assemble_mass_matrix(
         self, state: State, param: SimulationParameters
