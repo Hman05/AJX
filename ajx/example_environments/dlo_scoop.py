@@ -841,7 +841,13 @@ class DLOScoop(Environment):
         multipliers_size = self.get_multiplier_size()
         multipliers = jnp.zeros([multipliers_size])
 
-        return DLOState(initial_conf, initial_gvel, targets, multipliers)
+        return DLOState(
+            initial_conf,
+            initial_gvel,
+            targets,
+            multipliers=multipliers,
+            residual=jnp.zeros_like(multipliers),
+        )
 
     def control_help_strings(self):
         return [
