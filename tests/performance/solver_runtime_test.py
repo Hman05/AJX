@@ -95,7 +95,7 @@ def simulate_dlo(settings_dict, tmax=None):
     )
 
     state = env.state_from_angles(env_param)
-    env_step = jax.jit(env.step_residual)
+    env_step = jax.jit(env.step_state)
     u = np.zeros(
         [
             horizon,
@@ -118,14 +118,15 @@ def simulate_dlo(settings_dict, tmax=None):
 
         # Step the environment and store the observation
         start_time = time.perf_counter()
-        state, res = env_step(state, u, env_param)
+        state = env_step(state, u, env_param)
         jax.block_until_ready(state)
-        jax.block_until_ready(res)
         step_runtime = time.perf_counter() - start_time
 
         for j in range(3):
             position[j].append(np.array(state.conf.pos)[:, j])
         runtimes.append(step_runtime)
+
+        res = state.residual
         residuals.append(res)
 
     for j in range(3):

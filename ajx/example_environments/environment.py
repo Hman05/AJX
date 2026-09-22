@@ -40,40 +40,21 @@ class Environment(ABC):
         return self.sim.observe(state, None, param)
 
     def step(self, state, action, param):
-        state, ((qdot_next, multipliers, _), code) = self.sim.pre_step(
-            state, action, param
-        )
+        state, ((qdot_next, multipliers, residual), code) = self.sim.pre_step(state, action, param)
         observation = self.sim.observe(state, qdot_next, param)
-        new_state = self.sim.post_step(state, qdot_next, multipliers)
+        new_state = self.sim.post_step(state, qdot_next, multipliers, residual)
         return new_state, observation
 
     def step_state(self, state, action, param):
-        state, ((qdot_next, multipliers, _), code) = self.sim.pre_step(
-            state, action, param
-        )
-        new_state = self.sim.post_step(state, qdot_next, multipliers)
+        state, ((qdot_next, multipliers, residual), code) = self.sim.pre_step(state, action, param)
+        new_state = self.sim.post_step(state, qdot_next, multipliers, residual)
         return new_state
-
-    def step_residual(self, state, action, param):
-        """
-        Step the system state one step forward in time, and return the solver residual in addition to the state.
-        OUTPUTS:
-            new_state: Instance of ajx.definitions.State, the updated state.
-            res: jax.Array, the solver residual from the last step.
-        """
-        state, ((qdot_next, multipliers, res), code) = self.sim.pre_step(
-            state, action, param
-        )
-        new_state = self.sim.post_step(state, qdot_next, multipliers)
-        return new_state, res
 
     def get_multiplier_names(self):
         return [
             item
             for constraint in self.sim.constraint_list
-            for item in [
-                f"{constraint.name}.{mn}" for mn in constraint.get_multiplier_names()
-            ]
+            for item in [f"{constraint.name}.{mn}" for mn in constraint.get_multiplier_names()]
         ]
 
     def get_multiplier_size(self):
@@ -83,45 +64,19 @@ class Environment(ABC):
         pos_coords = [".x", ".y", ".z"]
         rot_coords = [".qs", ".qx", ".qy", ".qz"]
         gvel_coords = [".x_dot", ".y_dot", ".z_dot", ".rx_dot", ".ry_dot", ".rz_dot"]
-        pos_dof_names = [
-            item
-            for rb in self.sim.rigid_body_list
-            for item in [rb.name + c for c in pos_coords]
-        ]
-        rot_dof_names = [
-            item
-            for rb in self.sim.rigid_body_list
-            for item in [rb.name + c for c in rot_coords]
-        ]
-        gvel_dof_names = [
-            item
-            for rb in self.sim.rigid_body_list
-            for item in [rb.name + c for c in gvel_coords]
-        ]
+        pos_dof_names = [item for rb in self.sim.rigid_body_list for item in [rb.name + c for c in pos_coords]]
+        rot_dof_names = [item for rb in self.sim.rigid_body_list for item in [rb.name + c for c in rot_coords]]
+        gvel_dof_names = [item for rb in self.sim.rigid_body_list for item in [rb.name + c for c in gvel_coords]]
         return [*pos_dof_names, *rot_dof_names, *gvel_dof_names]
 
     def get_state_residual_names(self):
         pos_coords = [".x", ".y", ".z"]
         rot_coords = [".rx", ".ry", ".rz"]
         gvel_coords = [".x_dot", ".y_dot", ".z_dot", ".rx_dot", ".ry_dot", ".rz_dot"]
-        pos_dof_names = [
-            item
-            for rb in self.sim.rigid_body_list
-            for item in [rb.name + c for c in pos_coords]
-        ]
-        rot_dof_names = [
-            item
-            for rb in self.sim.rigid_body_list
-            for item in [rb.name + c for c in rot_coords]
-        ]
-        gvel_dof_names = [
-            item
-            for rb in self.sim.rigid_body_list
-            for item in [rb.name + c for c in gvel_coords]
-        ]
+        pos_dof_names = [item for rb in self.sim.rigid_body_list for item in [rb.name + c for c in pos_coords]]
+        rot_dof_names = [item for rb in self.sim.rigid_body_list for item in [rb.name + c for c in rot_coords]]
+        gvel_dof_names = [item for rb in self.sim.rigid_body_list for item in [rb.name + c for c in gvel_coords]]
         return [*pos_dof_names, *rot_dof_names, *gvel_dof_names]
 
     def observation_strings(self, observation):
-        return [
-            f"{name}: {obs}" for name, obs in zip(self.observable_names, observation)
-        ]
+        return [f"{name}: {obs}" for name, obs in zip(self.observable_names, observation)]

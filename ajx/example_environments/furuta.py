@@ -7,9 +7,7 @@ from ajx.example_environments.environment import Environment
 from typing import Optional
 import ajx.example_graphics.geometry as geometry
 
-FurutaSparseParam = create_parameter_node(
-    "FurutaSparseParam", ("electric_motor", "gravity", "offset_param")
-)
+FurutaSparseParam = create_parameter_node("FurutaSparseParam", ("electric_motor", "gravity", "offset_param"))
 
 
 class Furuta(Environment):
@@ -27,9 +25,7 @@ class Furuta(Environment):
             self.reference_timestep = sim_settings.timestep
 
         self.camera_pos = jnp.array([0.0, 5.0, 0.0])
-        self.camera_rot = math.quat_from_axis_angle(
-            jnp.array([1.0, 0.0, 0.0]), 0.5 * jnp.pi
-        )
+        self.camera_rot = math.quat_from_axis_angle(jnp.array([1.0, 0.0, 0.0]), 0.5 * jnp.pi)
 
         self.control_names = ["voltage"]
         self.state_tangent_dim = 2 * 12
@@ -51,12 +47,8 @@ class Furuta(Environment):
         arm2_model = os.path.join(script_dir, "assets/arm2.bam")
         stand_model = os.path.join(script_dir, "assets/base.bam")
 
-        arm1_model = geometry.Model(
-            "arm1_model", arm1_model, translation=(-com_displacement1, 0.0, 0.0)
-        )
-        arm2_model = geometry.Model(
-            "arm2_model", arm2_model, translation=(0.0, com_displacement2, 0.0)
-        )
+        arm1_model = geometry.Model("arm1_model", arm1_model, translation=(-com_displacement1, 0.0, 0.0))
+        arm2_model = geometry.Model("arm2_model", arm2_model, translation=(0.0, com_displacement2, 0.0))
 
         arm1 = RigidBody("arm1", [("arm1_model", Transform.identity())])
         arm1_param = RigidBodyParameters.create(
@@ -65,9 +57,7 @@ class Furuta(Environment):
             name="arm1",
         )
         arm2 = RigidBody("arm2", [("arm2_model", Transform.identity())])
-        arm2_param = RigidBodyParameters.create(
-            mass=0.238, inertia_diag=jnp.array([0.0016, 1e-6, 0.0016]), name="arm2"
-        )
+        arm2_param = RigidBodyParameters.create(mass=0.238, inertia_diag=jnp.array([0.0016, 1e-6, 0.0016]), name="arm2")
 
         # enable_motor = not self.no_motor
         self.hinge1 = OneBodyConstraint(
@@ -81,9 +71,7 @@ class Furuta(Environment):
         rotation3 = rotation2
 
         electric_motor_param = GainMotorParameters(0.0004, 7.5)  # 0.00265, 0.0039
-        electric_motor = GainMotor(
-            "electric_motor", self.hinge1, sim_settings.timestep, 0, 5
-        )
+        electric_motor = GainMotor("electric_motor", self.hinge1, sim_settings.timestep, 0, 5)
         # self.electric_motor = TargetSpeedMotor("electric_motor", "hinge1_motor", 0)
 
         hinge1_param = ConstraintParameters.create(
@@ -118,9 +106,7 @@ class Furuta(Environment):
         rb_param = RigidBodyParameters.concatenate([arm1_param, arm2_param])
         rigid_bodies = (arm1, arm2)
 
-        constraint_param = ConstraintParameters.concatenate(
-            [hinge1_param, hinge2_param]
-        )
+        constraint_param = ConstraintParameters.concatenate([hinge1_param, hinge2_param])
         constraints = (self.hinge1, self.hinge2)
 
         pre_step_modifiers = (electric_motor,)
@@ -178,17 +164,13 @@ class Furuta(Environment):
         ]
 
     def observation_to_configuration(self, observation, param):
-        world_transform = Transform(
-            jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
-        )
+        world_transform = Transform(jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0]))
 
         theta1 = observation[0]
         theta2 = observation[1]
         arm1_transform = self.hinge1.place_other(param, world_transform, theta1)
         arm2_transform = self.hinge2.place_other(5, param, arm1_transform, theta2)
-        return Configuration.concatenate(
-            [arm1_transform.to_configuration(), arm2_transform.to_configuration()]
-        )
+        return Configuration.concatenate([arm1_transform.to_configuration(), arm2_transform.to_configuration()])
 
     def state_from_angles(self, theta1, theta2, param):
         initial_observations = jnp.stack([theta1, theta2], axis=-1)
@@ -200,15 +182,13 @@ class Furuta(Environment):
         multipliers_size = self.get_multiplier_size()
         multipliers = jnp.zeros([multipliers_size])
 
-        return State(initial_conf, initial_gvel, multipliers=multipliers)
+        return State(initial_conf, initial_gvel, multipliers=multipliers, residual=jnp.zeros_like(multipliers))
 
     def control_func(self, observation, last_observation, keymap, control_state):
         if not keymap:
             return jnp.array([0.0])
         motor = 0.0
-        if (keymap["l"] and keymap["h"]) or (
-            keymap["arrow_left"] and keymap["arrow_right"]
-        ):
+        if (keymap["l"] and keymap["h"]) or (keymap["arrow_left"] and keymap["arrow_right"]):
             motor = 0.0
         elif keymap["h"] or keymap["arrow_left"]:
             motor = -8.0
