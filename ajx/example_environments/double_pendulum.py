@@ -7,9 +7,7 @@ from ajx.example_environments.environment import Environment
 from typing import Optional
 import ajx.example_graphics.geometry as geometry
 
-DoublePendulumSparseParam = create_parameter_node(
-    "DoublePendulumSparseParam", ("electric_motor", "offset_param")
-)
+DoublePendulumSparseParam = create_parameter_node("DoublePendulumSparseParam", ("electric_motor", "offset_param"))
 from flax import struct
 
 
@@ -60,12 +58,8 @@ class DoublePendulum(Environment):
         arm2_model = os.path.join(script_dir, "assets/double_pendulum_arm2.bam")
         stand_model = os.path.join(script_dir, "assets/double_pendulum_stand.bam")
 
-        arm1_model = geometry.Model(
-            "arm1_model", arm1_model, rotation=math.Rotations.y_to_z
-        )
-        arm2_model = geometry.Model(
-            "arm2_model", arm2_model, rotation=math.Rotations.y_to_z
-        )
+        arm1_model = geometry.Model("arm1_model", arm1_model, rotation=math.Rotations.y_to_z)
+        arm2_model = geometry.Model("arm2_model", arm2_model, rotation=math.Rotations.y_to_z)
 
         arm1 = RigidBody("arm1", [("arm1_model", Transform.identity())])
         m1 = self.env_settings.m1
@@ -81,9 +75,7 @@ class DoublePendulum(Environment):
         Jz = 0.5 * m2 * 0.1**2
         Jxy = 1 / 12 * m2 * (3 * 0.1**2 + l_2to1 + 1.0)
         arm2 = RigidBody("arm2", [("arm2_model", Transform.identity())])
-        arm2_param = RigidBodyParameters.create(
-            mass=m2, inertia_diag=jnp.array([Jxy, Jxy, Jz]), name="arm2"
-        )
+        arm2_param = RigidBodyParameters.create(mass=m2, inertia_diag=jnp.array([Jxy, Jxy, Jz]), name="arm2")
 
         # enable_motor = not self.no_motor
         self.hinge1 = OneBodyConstraint(
@@ -94,9 +86,7 @@ class DoublePendulum(Environment):
         )
 
         electric_motor_param = GainMotorParameters(0.0004, 75.0)  # 0.00265, 0.0039
-        electric_motor = GainMotor(
-            "electric_motor", self.hinge1, sim_settings.timestep, 0, 5
-        )
+        electric_motor = GainMotor("electric_motor", self.hinge1, sim_settings.timestep, 0, 5)
         # self.electric_motor = TargetSpeedMotor("electric_motor", "hinge1_motor", 0)
 
         hinge1_param = ConstraintParameters.create(
@@ -128,9 +118,7 @@ class DoublePendulum(Environment):
         rb_param = RigidBodyParameters.concatenate([arm1_param, arm2_param])
         rigid_bodies = (arm1, arm2)
 
-        constraint_param = ConstraintParameters.concatenate(
-            [hinge1_param, hinge2_param]
-        )
+        constraint_param = ConstraintParameters.concatenate([hinge1_param, hinge2_param])
         constraints = (self.hinge1, self.hinge2)
 
         pre_step_modifiers = (electric_motor,)
@@ -175,17 +163,13 @@ class DoublePendulum(Environment):
         ]
 
     def observation_to_configuration(self, observation, param):
-        world_transform = Transform(
-            jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
-        )
+        world_transform = Transform(jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0]))
 
         theta1 = observation[0]
         theta2 = observation[1]
         arm1_transform = self.hinge1.place_other(param, world_transform, theta1)
         arm2_transform = self.hinge2.place_other(5, param, arm1_transform, theta2)
-        return Configuration.concatenate(
-            [arm1_transform.to_configuration(), arm2_transform.to_configuration()]
-        )
+        return Configuration.concatenate([arm1_transform.to_configuration(), arm2_transform.to_configuration()])
 
     def state_from_angles(self, theta1, theta2, param):
         initial_observations = jnp.stack([theta1, theta2], axis=-1)
@@ -197,15 +181,13 @@ class DoublePendulum(Environment):
         multipliers_size = self.get_multiplier_size()
         multipliers = jnp.zeros([multipliers_size])
 
-        return State(initial_conf, initial_gvel, multipliers=multipliers)
+        return State(initial_conf, initial_gvel, multipliers=multipliers, residual=jnp.zeros_like(multipliers))
 
     def control_func(self, observation, last_observation, keymap, control_state):
         if not keymap:
             return jnp.array([0.0])
         motor = 0.0
-        if (keymap["l"] and keymap["h"]) or (
-            keymap["arrow_left"] and keymap["arrow_right"]
-        ):
+        if (keymap["l"] and keymap["h"]) or (keymap["arrow_left"] and keymap["arrow_right"]):
             motor = 0.0
         elif keymap["h"] or keymap["arrow_left"]:
             motor = -8.0
@@ -232,5 +214,6 @@ class DoublePendulum(Environment):
         return State(
             Configuration(conf_pos, conf_rot),
             GeneralizedVelocity(gvel),
-            multipliers=multipliers
+            multipliers=multipliers,
+            residual=jnp.zeros_like(multipliers),
         )

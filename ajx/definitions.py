@@ -85,8 +85,7 @@ class Configuration(ParameterNode):
             self.tangent_size(),
         ), f"Expected update shape ({self.tangent_size()},), got {update.shape}."
         assert len(self.pos.shape) == 2, (
-            f"Expected pos to have shape (n_bodies, 3); got {self.pos.shape}. "
-            "Use vmap for batched inputs."
+            f"Expected pos to have shape (n_bodies, 3); got {self.pos.shape}. " "Use vmap for batched inputs."
         )
         n_bodies = self.pos.shape[0]
         bodies_size = n_bodies * 6
@@ -139,9 +138,8 @@ class State(ParameterNode):
     conf: Configuration
     gvel: GeneralizedVelocity
     multipliers: jax.Array = struct.field(default_factory=lambda: jnp.zeros([0]))
-    tangent_restrictions: Tuple[str] = struct.field(
-        pytree_node=False, default=tuple(["conf", "gvel"])
-    )
+    tangent_restrictions: Tuple[str] = struct.field(pytree_node=False, default=tuple(["conf", "gvel"]))
+    residual: jax.Array = struct.field(default_factory=lambda: jnp.zeros([0]))
 
 
 @struct.dataclass
@@ -237,17 +235,13 @@ class ConstraintParameters(ParameterNode):
         compliance = jnp.concatenate([compliance_lin, compliance_rot], axis=-1)
         viscous_compliance_lin = jnp.array([viscous_compliance_lin] * 3)[None]
         viscous_compliance_rot = jnp.array([viscous_compliance_rot] * 3)[None]
-        viscous_compliance = jnp.concatenate(
-            [viscous_compliance_lin, viscous_compliance_rot], axis=-1
-        )
+        viscous_compliance = jnp.concatenate([viscous_compliance_lin, viscous_compliance_rot], axis=-1)
         damping = jnp.array([damping] * 6)[None]
         target = jnp.zeros(5)[None]
         offset = jnp.array([offset])[None]
         target = jnp.concatenate([target, offset], axis=1)
 
-        is_velocity = jnp.array([False, False, False, False, False, False], dtype=bool)[
-            None
-        ]
+        is_velocity = jnp.array([False, False, False, False, False, False], dtype=bool)[None]
         names = (name,)
         return cls(
             names,
@@ -278,9 +272,7 @@ class ConstraintParameters(ParameterNode):
         offset = jnp.array([offset])[None]
         target = jnp.concatenate([target, offset], axis=1)
 
-        is_velocity = jnp.array([False, False, False, False, False, False], dtype=bool)[
-            None
-        ]
+        is_velocity = jnp.array([False, False, False, False, False, False], dtype=bool)[None]
         names = (name,)
         return cls(
             names,
@@ -391,9 +383,7 @@ class RigidBodyParameters(ParameterNode):
     # 2D Array
     mass: jax.Array
     mc: jax.Array = struct.field(metadata={"second_axis_names": ("x", "y", "z")})
-    inertia: jax.Array = struct.field(
-        metadata={"second_axis_names": ("xx", "xy", "xz", "yy", "yz", "zz")}
-    )
+    inertia: jax.Array = struct.field(metadata={"second_axis_names": ("xx", "xy", "xz", "yy", "yz", "zz")})
 
     names_mc = ("x", "y", "z")
 

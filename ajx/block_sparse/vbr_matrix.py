@@ -230,7 +230,7 @@ class VBRMatrix(BlockMatrixBase):
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         return cls(*children, *aux_data)
-    
+    """
     def get_row_from_group(self, group_offset, group_id, row_size, col_sizes):
         local_offset = row_size * np.sum(col_sizes) * group_id
         matrices = []
@@ -240,6 +240,17 @@ class VBRMatrix(BlockMatrixBase):
             ).reshape(row_size, col_size)
             local_offset += row_size * col_size
             matrices.append(mat)
+        return matrices
+    """
+
+    def get_row_from_group(self, group_offset, group_id, row_size, col_sizes):
+        total = int(row_size * np.sum(col_sizes))
+        row_flat = jax.lax.dynamic_slice(self.data, (group_offset + total * group_id,), (total,))
+        matrices, off = [], 0
+        for col_size in col_sizes:
+            size = int(row_size * col_size)
+            matrices.append(row_flat[off:off + size].reshape(row_size, col_size))
+            off += size
         return matrices
 
     def to_scalar_matrix(self):
