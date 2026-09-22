@@ -4,7 +4,9 @@ from ajx.example_environments.environment import Environment
 
 import ajx.example_graphics.geometry as geometry
 
-CartPoleSparseParam = create_parameter_node("CartPoleSparseParam", ("motor", "offset_param"))
+CartPoleSparseParam = create_parameter_node(
+    "CartPoleSparseParam", ("motor", "offset_param")
+)
 
 
 class CartPole(Environment):
@@ -47,7 +49,9 @@ class CartPole(Environment):
         )
 
         cart = RigidBody("cart", [("cart_box", Transform.identity())])
-        cart_param = RigidBodyParameters.create(mass=0.127, inertia_diag=jnp.array([0.02, 0.02, 0.02]), name="cart")
+        cart_param = RigidBodyParameters.create(
+            mass=0.127, inertia_diag=jnp.array([0.02, 0.02, 0.02]), name="cart"
+        )
         self.pendulum = RigidBody("pendulum", [("pendulum_box", Transform.identity())])
         pendulum_param = RigidBodyParameters.create(
             mass=0.5, inertia_diag=jnp.array([0.02, 0.02, 0.02]), name="pendulum"
@@ -76,8 +80,12 @@ class CartPole(Environment):
         )
 
         track_angle = 0.0
-        hinge_cart_rotation = math.quat_from_axis_angle(jnp.array([0.0, 0.0, 1.0]), jnp.pi / 2)
-        horizontal_rotation = math.quat_from_axis_angle(jnp.array([0.0, 0.0, 1.0]), track_angle)
+        hinge_cart_rotation = math.quat_from_axis_angle(
+            jnp.array([0.0, 0.0, 1.0]), jnp.pi / 2
+        )
+        horizontal_rotation = math.quat_from_axis_angle(
+            jnp.array([0.0, 0.0, 1.0]), track_angle
+        )
         hinge_world_rotation = math.quat_mul(hinge_cart_rotation, horizontal_rotation)
         self.hinge = TwoBodyConstraint(
             name="hinge",
@@ -96,7 +104,9 @@ class CartPole(Environment):
         )
         rb_param = RigidBodyParameters.concatenate([cart_param, pendulum_param])
         self.rigid_bodies = (cart, self.pendulum)
-        constraint_param = ConstraintParameters.concatenate([prismatic_param, hinge_param])
+        constraint_param = ConstraintParameters.concatenate(
+            [prismatic_param, hinge_param]
+        )
         self.constraints = (self.prismatic, self.hinge)
 
         self.pre_step_modifiers = (motor,)
@@ -145,13 +155,17 @@ class CartPole(Environment):
         self.extra_geometry = (("rail", Transform.identity()),)
 
     def observation_to_configuration(self, observation, param):
-        world_transform = Transform(jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0]))
+        world_transform = Transform(
+            jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
+        )
 
         x = observation[0]
         theta = observation[1]
         cart_transform = self.prismatic.place_other(param, world_transform, x)
         pendulum_transform = self.hinge.place_other(5, param, cart_transform, theta)
-        return Configuration.concatenate([cart_transform.to_configuration(), pendulum_transform.to_configuration()])
+        return Configuration.concatenate(
+            [cart_transform.to_configuration(), pendulum_transform.to_configuration()]
+        )
 
     def state_from_angles(self, x, theta, param):
         initial_observations = jnp.stack([x, theta], axis=-1)
@@ -163,13 +177,20 @@ class CartPole(Environment):
         multipliers_size = self.get_multiplier_size()
         multipliers = jnp.zeros([multipliers_size])
 
-        return State(initial_conf, initial_gvel, multipliers=multipliers, residual=jnp.zeros_like(multipliers))
+        return State(
+            initial_conf,
+            initial_gvel,
+            multipliers=multipliers,
+            residual=jnp.zeros_like(multipliers),
+        )
 
     def control_func(self, observation, last_observation, keymap, control_state):
         if not keymap:
             return jnp.array([0.0])
         motor = 0.0
-        if (keymap["l"] and keymap["h"]) or (keymap["arrow_left"] and keymap["arrow_right"]):
+        if (keymap["l"] and keymap["h"]) or (
+            keymap["arrow_left"] and keymap["arrow_right"]
+        ):
             motor = 0.0
         elif keymap["h"] or keymap["arrow_left"]:
             motor = 10.0

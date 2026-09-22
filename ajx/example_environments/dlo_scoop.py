@@ -46,7 +46,9 @@ class DLOSettings:
         pose_estimate_offsets.append(gripper1_offset)
         pose_estimate_constraints_a.append("lock_gripper1_to_dlo")
 
-        unit_transform = Transform(jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0]))
+        unit_transform = Transform(
+            jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
+        )
         for displacement in pose_estimate_linear_offsets:
             i = int(n_segments * displacement / length)
             pose_estimate_bodies.append(f"body{i}")
@@ -147,7 +149,9 @@ class CoupleAsCable(PreStepModifier):
 
         if self.model_shear_deformation:
             timoshenko_shear_coefficient = 0.857
-            shear_stiffness = G * area / self.segment_length * timoshenko_shear_coefficient
+            shear_stiffness = (
+                G * area / self.segment_length * timoshenko_shear_coefficient
+            )
 
         stiffness = jnp.array(
             [
@@ -161,10 +165,14 @@ class CoupleAsCable(PreStepModifier):
         )
 
         constraint_param = constraint_param.replace(
-            compliance=constraint_param.compliance.at[slice_begin:slice_end].set(1 / stiffness)
+            compliance=constraint_param.compliance.at[slice_begin:slice_end].set(
+                1 / stiffness
+            )
         )
         constraint_param = constraint_param.replace(
-            damping=constraint_param.damping.at[slice_begin:slice_end].set(cable_param.damping)
+            damping=constraint_param.damping.at[slice_begin:slice_end].set(
+                cable_param.damping
+            )
         )
         new_param = param.replace(constraint_param=constraint_param)
         return state, new_param
@@ -189,10 +197,13 @@ class LockAtZeroSpeedMotor(PreStepModifier):
             + u[self.u_idx : self.u_idx + num_lock_deg] * not_lock
         )
         new_lock_target = (
-            state.lock_targets[self.lock_idx : self.lock_idx + num_lock_deg] * lock + current_offset * not_lock
+            state.lock_targets[self.lock_idx : self.lock_idx + num_lock_deg] * lock
+            + current_offset * not_lock
         )
         state = state.replace(
-            lock_targets=state.lock_targets.at[self.lock_idx : self.lock_idx + num_lock_deg].set(new_lock_target)
+            lock_targets=state.lock_targets.at[
+                self.lock_idx : self.lock_idx + num_lock_deg
+            ].set(new_lock_target)
         )
         constraint_id = param.constraint_param.names.index(self.constraint.name)
         return state, (
@@ -200,10 +211,12 @@ class LockAtZeroSpeedMotor(PreStepModifier):
                 {
                     f"constraint_param.is_velocity": param.constraint_param.is_velocity.at[
                         constraint_id, self.lock_degrees
-                    ].set(not_lock),
-                    f"constraint_param.target": param.constraint_param.target.at[constraint_id, self.lock_degrees].set(
-                        target
+                    ].set(
+                        not_lock
                     ),
+                    f"constraint_param.target": param.constraint_param.target.at[
+                        constraint_id, self.lock_degrees
+                    ].set(target),
                 }
             )
         )
@@ -261,9 +274,13 @@ class DLOScoop(Environment):
 
         script_dir = os.path.dirname(__file__)
         capsule_path = os.path.join(script_dir, "assets/capsule.bam")
-        hex_wireframe_path = os.path.join(script_dir, "assets/hex_cylinder_wireframe.bam")
+        hex_wireframe_path = os.path.join(
+            script_dir, "assets/hex_cylinder_wireframe.bam"
+        )
         grip_tool_path = os.path.join(script_dir, "assets/grip_tool.bam")
-        grip_tool_debug_path = os.path.join(script_dir, "assets/grip_tool_wireframe.bam")
+        grip_tool_debug_path = os.path.join(
+            script_dir, "assets/grip_tool_wireframe.bam"
+        )
         axes_path = os.path.join(script_dir, "assets/axes.glb")
         marker_debug_path = os.path.join(script_dir, "assets/cube_wireframe.glb")
         shovel_path = os.path.join(script_dir, "assets/shovel.glb")
@@ -388,10 +405,16 @@ class DLOScoop(Environment):
             0.25 * 0.5,
             0.01 * 0.5,
         )
-        tool1_model_local_transform = Transform(jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_y)
+        tool1_model_local_transform = Transform(
+            jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_y
+        )
         marker1_local_transform = self.env_settings.pose_estimate_offsets[0]
-        tool1_to_dlo_frame = Transform(jnp.array([grapple_box_length, 0.0, 0.0]), math.Rotations.identity)
-        tool2_to_dlo_frame = Transform(jnp.array([-0.060425, 0.0, 0.0]), math.Rotations.identity)
+        tool1_to_dlo_frame = Transform(
+            jnp.array([grapple_box_length, 0.0, 0.0]), math.Rotations.identity
+        )
+        tool2_to_dlo_frame = Transform(
+            jnp.array([-0.060425, 0.0, 0.0]), math.Rotations.identity
+        )
 
         density = self.env_settings.density
 
@@ -455,8 +478,12 @@ class DLOScoop(Environment):
         for i in range(self.env_settings.n_segments):
             offset_a = bl
             offset_b = -bl
-            frame_a_transform = Transform(jnp.array([offset_a, 0.0, 0.0]), math.Rotations.identity)
-            frame_b_transform = Transform(jnp.array([offset_b, 0.0, 0.0]), math.Rotations.identity)
+            frame_a_transform = Transform(
+                jnp.array([offset_a, 0.0, 0.0]), math.Rotations.identity
+            )
+            frame_b_transform = Transform(
+                jnp.array([offset_b, 0.0, 0.0]), math.Rotations.identity
+            )
             segment_geometry = [("segment_model", Transform.identity())]
             debug_geometry = [
                 ("axes_model", frame_a_transform),
@@ -578,8 +605,12 @@ class DLOScoop(Environment):
             )
             lock_joint_param.append(
                 ConstraintParameters.create_locked(
-                    frame_a=Frame(jnp.array([offset_a, 0.0, 0.0]), math.Rotations.identity),
-                    frame_b=Frame(jnp.array([offset_b, 0.0, 0.0]), math.Rotations.identity),
+                    frame_a=Frame(
+                        jnp.array([offset_a, 0.0, 0.0]), math.Rotations.identity
+                    ),
+                    frame_b=Frame(
+                        jnp.array([offset_b, 0.0, 0.0]), math.Rotations.identity
+                    ),
                     compliance=1e-5,
                     viscous_compliance=1e-5,
                     damping=2 * self.reference_timestep,
@@ -673,9 +704,15 @@ class DLOScoop(Environment):
 
         pos_yaw_degrees = jnp.array([0, 1, 2, 5])
         hinge_degree = jnp.array([5])
-        target_speed_motor1 = LockAtZeroSpeedMotor("motor1_pos_yaw", self.lock_world_to_hidden1a, pos_yaw_degrees, 0, 0)
-        target_speed_motor2 = LockAtZeroSpeedMotor("motor1_pitch", self.lock_hidden1a_to_hidden2a, hinge_degree, 4, 4)
-        target_speed_motor3 = LockAtZeroSpeedMotor("motor1_roll", self.lock_hidden2a_to_gripper1, hinge_degree, 5, 5)
+        target_speed_motor1 = LockAtZeroSpeedMotor(
+            "motor1_pos_yaw", self.lock_world_to_hidden1a, pos_yaw_degrees, 0, 0
+        )
+        target_speed_motor2 = LockAtZeroSpeedMotor(
+            "motor1_pitch", self.lock_hidden1a_to_hidden2a, hinge_degree, 4, 4
+        )
+        target_speed_motor3 = LockAtZeroSpeedMotor(
+            "motor1_roll", self.lock_hidden2a_to_gripper1, hinge_degree, 5, 5
+        )
 
         self.cable = CoupleAsCable(
             "couple_constraints",
@@ -756,18 +793,32 @@ class DLOScoop(Environment):
         )
 
         body_transforms = []
-        body_transforms.append(self.lock_world_to_hidden1a.place_other(param, world_transform, 0))
-        body_transforms.append(self.lock_hidden1a_to_hidden2a.place_other(0, param, body_transforms[-1], 0))
-        body_transforms.append(self.lock_hidden2a_to_gripper1.place_other(0, param, body_transforms[-1], 0))
+        body_transforms.append(
+            self.lock_world_to_hidden1a.place_other(param, world_transform, 0)
+        )
+        body_transforms.append(
+            self.lock_hidden1a_to_hidden2a.place_other(0, param, body_transforms[-1], 0)
+        )
+        body_transforms.append(
+            self.lock_hidden2a_to_gripper1.place_other(0, param, body_transforms[-1], 0)
+        )
         for i in range(self.env_settings.n_segments):
-            new_transform = self.lock_joints[i].place_other(0, param, body_transforms[-1], 0)
+            new_transform = self.lock_joints[i].place_other(
+                0, param, body_transforms[-1], 0
+            )
             body_transforms.append(new_transform)
-        gripper2_transform = self.lock_joints[-1].place_other(0, param, body_transforms[-1], 0)
-        cylinder_transform = self.lock_gripper2_to_cylinder.place_other(0, param, gripper2_transform, 0)
+        gripper2_transform = self.lock_joints[-1].place_other(
+            0, param, body_transforms[-1], 0
+        )
+        cylinder_transform = self.lock_gripper2_to_cylinder.place_other(
+            0, param, gripper2_transform, 0
+        )
         body_transforms.append(gripper2_transform)
         body_transforms.append(cylinder_transform)
 
-        return Configuration.concatenate([body_transform.to_configuration() for body_transform in body_transforms])
+        return Configuration.concatenate(
+            [body_transform.to_configuration() for body_transform in body_transforms]
+        )
 
     def get_neutral_state(self, param):
         initial_conf = self.create_neutral_configuration(None, param)
@@ -810,14 +861,18 @@ class DLOScoop(Environment):
         motor4 = 0.0
         motor5 = 0.0
         motor6 = 0.0
-        if (key_map["l"] and key_map["h"]) or (key_map["arrow_left"] and key_map["arrow_right"]):
+        if (key_map["l"] and key_map["h"]) or (
+            key_map["arrow_left"] and key_map["arrow_right"]
+        ):
             motor1 = 0.0
         elif key_map["h"] or key_map["arrow_left"]:
             motor1 = 0.3  # -0.5
         elif key_map["l"] or key_map["arrow_right"]:
             motor1 = -0.3  # 0.5
 
-        if (key_map["j"] and key_map["k"]) or (key_map["arrow_down"] and key_map["arrow_up"]):
+        if (key_map["j"] and key_map["k"]) or (
+            key_map["arrow_down"] and key_map["arrow_up"]
+        ):
             motor3 = 0.0
         elif key_map["j"] or key_map["arrow_down"]:
             motor3 = -0.3
@@ -850,11 +905,16 @@ class DLOScoop(Environment):
         control_state = None
         return jnp.concatenate([motor1_to_6]), control_state
 
-    def get_state_with_floating_markers(self, param: SimulationParameters, transforms: Transform):
+    def get_state_with_floating_markers(
+        self, param: SimulationParameters, transforms: Transform
+    ):
         """Only for debug initialization"""
         # Find "relaxed-offset" at interpolation transforms
         state0 = self.get_neutral_state(param)
-        indices_p = [param.rigid_body_param.names.index(name) for name in self.env_settings.pose_estimate_bodies]
+        indices_p = [
+            param.rigid_body_param.names.index(name)
+            for name in self.env_settings.pose_estimate_bodies
+        ]
         new_pos = state0.conf.pos.at[indices_p, :].set(transforms.pos)
         new_rot = state0.conf.rot.at[indices_p, :].set(transforms.rot)
         new_conf = state0.conf.replace(pos=new_pos, rot=new_rot)

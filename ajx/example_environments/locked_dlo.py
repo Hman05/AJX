@@ -30,25 +30,39 @@ class LockAtZeroSpeedMotorSE3(PreStepModifier):
         lock = u[self.u_idx : self.u_idx + 6] == 0.0
         pos_lock = jnp.all(lock)
         rot_lock = jnp.all(lock)
-        lock = jnp.concatenate([pos_lock, pos_lock, pos_lock, rot_lock, rot_lock, rot_lock], axis=None)
+        lock = jnp.concatenate(
+            [pos_lock, pos_lock, pos_lock, rot_lock, rot_lock, rot_lock], axis=None
+        )
 
         updated_frame = self.constraint.place_frame_a(state, param)
 
         target = u[self.u_idx : self.u_idx + 6] * jnp.logical_not(lock)
 
-        new_frame_pos = state.lock_targets[self.lock_idx][:3] * pos_lock + updated_frame.pos * jnp.logical_not(pos_lock)
-        new_frame_rot = state.lock_targets[self.lock_idx][3:] * rot_lock + updated_frame.rot * jnp.logical_not(rot_lock)
+        new_frame_pos = state.lock_targets[self.lock_idx][
+            :3
+        ] * pos_lock + updated_frame.pos * jnp.logical_not(pos_lock)
+        new_frame_rot = state.lock_targets[self.lock_idx][
+            3:
+        ] * rot_lock + updated_frame.rot * jnp.logical_not(rot_lock)
         new_frame = jnp.concatenate([new_frame_pos, new_frame_rot])
-        state = state.replace(lock_targets=state.lock_targets.at[self.lock_idx].set(new_frame))
+        state = state.replace(
+            lock_targets=state.lock_targets.at[self.lock_idx].set(new_frame)
+        )
         constraint_id = param.constraint_param.names.index(self.constraint.name)
         new_frames = param.constraint_param.frame_a.replace(
-            position=param.constraint_param.frame_a.position.at[constraint_id].set(new_frame[:3]),
-            rotation=param.constraint_param.frame_a.rotation.at[constraint_id].set(new_frame[3:7]),
+            position=param.constraint_param.frame_a.position.at[constraint_id].set(
+                new_frame[:3]
+            ),
+            rotation=param.constraint_param.frame_a.rotation.at[constraint_id].set(
+                new_frame[3:7]
+            ),
         )
         return state, (
             param.tree_replace(
                 {
-                    f"constraint_param.is_velocity.{self.constraint.name}": jnp.logical_not(lock),
+                    f"constraint_param.is_velocity.{self.constraint.name}": jnp.logical_not(
+                        lock
+                    ),
                     f"constraint_param.target.{self.constraint.name}": target,
                     f"constraint_param.frame_a": new_frames,
                 }
@@ -107,12 +121,20 @@ class LockedDLO(DLO):
             0.15,
         )
 
-        tool1_model_local_transform = Transform(jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_y)
-        tool2_model_local_transform = Transform(jnp.array([0.0, 0.0, 0.0]), math.Rotations.y_to_x)
+        tool1_model_local_transform = Transform(
+            jnp.array([0.0, 0.0, 0.0]), math.Rotations.x_to_y
+        )
+        tool2_model_local_transform = Transform(
+            jnp.array([0.0, 0.0, 0.0]), math.Rotations.y_to_x
+        )
         marker1_local_transform = self.env_settings.pose_estimate_offsets[0]
         marker2_local_transform = self.env_settings.pose_estimate_offsets[-1]
-        tool1_to_dlo_frame = Transform(jnp.array([grapple_box_length, 0.0, 0.0]), math.Rotations.identity)
-        tool2_to_dlo_frame = Transform(jnp.array([-grapple_box_length, 0.0, 0.0]), math.Rotations.identity)
+        tool1_to_dlo_frame = Transform(
+            jnp.array([grapple_box_length, 0.0, 0.0]), math.Rotations.identity
+        )
+        tool2_to_dlo_frame = Transform(
+            jnp.array([-grapple_box_length, 0.0, 0.0]), math.Rotations.identity
+        )
 
         grip_tool1 = RigidBody(
             f"grip_tool1",
@@ -145,8 +167,12 @@ class LockedDLO(DLO):
             name="grip_tool2",
         )
         for i in range(self.env_settings.n_segments):
-            frame_a_transform = Transform(jnp.array([bl, 0.0, 0.0]), math.Rotations.identity)
-            frame_b_transform = Transform(jnp.array([-bl, 0.0, 0.0]), math.Rotations.identity)
+            frame_a_transform = Transform(
+                jnp.array([bl, 0.0, 0.0]), math.Rotations.identity
+            )
+            frame_b_transform = Transform(
+                jnp.array([-bl, 0.0, 0.0]), math.Rotations.identity
+            )
             segment_geometry = [("segment_model", Transform.identity())]
             debug_geometry = [
                 ("axes_model", frame_a_transform),
@@ -288,10 +314,14 @@ class LockedDLO(DLO):
             name="lock_gripper2_to_hidden2b",
         )
 
-        rb_param = RigidBodyParameters.concatenate([grip_tool1_param, *arms_param, grip_tool2_param])
+        rb_param = RigidBodyParameters.concatenate(
+            [grip_tool1_param, *arms_param, grip_tool2_param]
+        )
         rigid_bodies = tuple([grip_tool1, *arms, grip_tool2])
 
-        constraint_param = ConstraintParameters.concatenate([first_lock_param, *lock_joint_param, last_lock_param])
+        constraint_param = ConstraintParameters.concatenate(
+            [first_lock_param, *lock_joint_param, last_lock_param]
+        )
         constraints = tuple([self.first_lock, *self.lock_joints, self.last_lock])
         if self.env_settings.loose_end:
             constraints = tuple([self.first_lock, *self.lock_joints])
@@ -360,14 +390,20 @@ class LockedDLO(DLO):
         self.extra_geometry = [("ground", Transform.identity())]
 
     def create_neutral_configuration(self, observation, param):
-        world_transform = Transform(jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0]))
+        world_transform = Transform(
+            jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
+        )
         body_transforms = []
         body_transforms.append(self.first_lock.place_other(param, world_transform, 0))
         for i in range(self.env_settings.n_segments):
-            new_transform = self.lock_joints[i].place_other(0, param, body_transforms[-1], 0)
+            new_transform = self.lock_joints[i].place_other(
+                0, param, body_transforms[-1], 0
+            )
             body_transforms.append(new_transform)
         body_transforms.append(self.last_lock.place_other(param, world_transform, 0))
-        return Configuration.concatenate([body_transform.to_configuration() for body_transform in body_transforms])
+        return Configuration.concatenate(
+            [body_transform.to_configuration() for body_transform in body_transforms]
+        )
 
     def get_neutral_state(self, param):
         initial_conf = self.create_neutral_configuration(None, param)
@@ -382,7 +418,11 @@ class LockedDLO(DLO):
         multipliers_size = self.get_multiplier_size()
         multipliers = jnp.zeros([multipliers_size])
         return DLOState(
-            initial_conf, initial_gvel, targets, multipliers=multipliers, residual=jnp.zeros_like(multipliers)
+            initial_conf,
+            initial_gvel,
+            targets,
+            multipliers=multipliers,
+            residual=jnp.zeros_like(multipliers),
         )
 
     def control_help_strings(self):

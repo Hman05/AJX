@@ -31,7 +31,9 @@ class Pendulum(Environment):
         super().post_init()
 
     def _build_sim(self, sim_settings):
-        self.pendulum_box = geometry.Box("pendulum_box", 0.08, 1.28, 0.08, (0.0, 0.0, 0.0), color=(0.9, 0.2, 0.2))
+        self.pendulum_box = geometry.Box(
+            "pendulum_box", 0.08, 1.28, 0.08, (0.0, 0.0, 0.0), color=(0.9, 0.2, 0.2)
+        )
 
         self.pendulum = RigidBody("pendulum", ("pendulum_box",))
         self.pendulum_param = RigidBodyParameters.create(
@@ -99,12 +101,18 @@ class Pendulum(Environment):
 
         self.geometry_list = (self.pendulum_box,)
         self.extra_geometry = (
-            geometry.Square("ground", 1.5, 1.5, (0.0, -3.0, 0.0), color=(0.2, 0.5, 0.2)),
-            geometry.Box("stand", 0.2, 1.5, 0.2, (0.28, -1.5, 0.0), color=(0.2, 0.2, 0.2)),
+            geometry.Square(
+                "ground", 1.5, 1.5, (0.0, -3.0, 0.0), color=(0.2, 0.5, 0.2)
+            ),
+            geometry.Box(
+                "stand", 0.2, 1.5, 0.2, (0.28, -1.5, 0.0), color=(0.2, 0.2, 0.2)
+            ),
         )
 
     def observation_to_configuration(self, observation, param):
-        world_transform = Transform(jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0]))
+        world_transform = Transform(
+            jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
+        )
 
         theta = observation[0]
         pendulum_transform = self.hinge.place_other(param, world_transform, theta)
@@ -120,7 +128,12 @@ class Pendulum(Environment):
         multipliers_size = self.get_multiplier_size()
         multipliers = jnp.zeros([multipliers_size])
 
-        return State(initial_conf, initial_gvel, multipliers=multipliers, residual=jnp.zeros_like(multipliers))
+        return State(
+            initial_conf,
+            initial_gvel,
+            multipliers=multipliers,
+            residual=jnp.zeros_like(multipliers),
+        )
 
     def unflatten(self, flat_state):
         sizes = jnp.array([1 * 3, 1 * 4, 1 * 6])

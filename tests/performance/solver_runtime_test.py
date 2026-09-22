@@ -38,8 +38,8 @@ def setup_dlo_environment(
     )
 
     shear_modulus = youngs_modulus / (2 * (1 + poission_ratio))
-    linear_stiffness, bend_stiffness, torsion_stiffness = env.get_stiffness_from_material_parameters(
-        youngs_modulus, shear_modulus
+    linear_stiffness, bend_stiffness, torsion_stiffness = (
+        env.get_stiffness_from_material_parameters(youngs_modulus, shear_modulus)
     )
 
     yz_linear_stiffness = linear_stiffness
@@ -91,7 +91,13 @@ def simulate_dlo(settings_dict, tmax=None):
 
     # To setup and initialize a dlo environment
     env, env_param = setup_dlo_environment(
-        timestep, pgs_iterations, solver, youngs_modulus, poisson_ratio, mass_density, number_of_bodies=number_of_bodies
+        timestep,
+        pgs_iterations,
+        solver,
+        youngs_modulus,
+        poisson_ratio,
+        mass_density,
+        number_of_bodies=number_of_bodies,
     )
 
     state = env.state_from_angles(env_param)
@@ -190,7 +196,11 @@ if __name__ == "__main__":
 
     fig, ax = plt.subplots(2, 1)
     generic_2d_plot(
-        ax[0], bend, label="Direct solver", title="Cantilever Beam, downward bend", axis_labels=["timestep", "[m]"]
+        ax[0],
+        bend,
+        label="Direct solver",
+        title="Cantilever Beam, downward bend",
+        axis_labels=["timestep", "[m]"],
     )
 
     settings_dict["solver"] = Solver.SPARSE_PGS
@@ -209,7 +219,9 @@ if __name__ == "__main__":
             axis_labels=["timestep", "[m]"],
         )
 
-        residual_max_norms.append(np.array([np.linalg.norm(res, ord=np.inf) for res in residuals]))
+        residual_max_norms.append(
+            np.array([np.linalg.norm(res, ord=np.inf) for res in residuals])
+        )
         generic_2d_plot(
             ax[1],
             residual_max_norms[-1],
@@ -220,7 +232,11 @@ if __name__ == "__main__":
 
     # To plot the largest absolute error in any time step versus iteration count.
     plt.figure()
-    plt.semilogy(iterations, np.array([np.linalg.norm(res, ord=np.inf) for res in residual_max_norms]), marker="o")
+    plt.semilogy(
+        iterations,
+        np.array([np.linalg.norm(res, ord=np.inf) for res in residual_max_norms]),
+        marker="o",
+    )
     plt.xlabel("PGS-iterations")
     plt.ylabel("residual max norm")
     plt.grid(which="major", linestyle="-", linewidth=0.8)

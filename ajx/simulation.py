@@ -145,7 +145,11 @@ class Simulation:
 
     @partial(jit, static_argnums=0)
     def post_step(
-        self, state: State, gvel_next: GeneralizedVelocity, multipliers: jax.Array, residual: jax.Array
+        self,
+        state: State,
+        gvel_next: GeneralizedVelocity,
+        multipliers: jax.Array,
+        residual: jax.Array,
     ) -> State:
         """
         Update the state using the given velocity update.
@@ -178,17 +182,23 @@ class Simulation:
 
             return pos_next, rot_next
 
-        pos_next, rot_next = jax.vmap(body_step)(gvel_next.data, state.conf.pos, state.conf.rot)
+        pos_next, rot_next = jax.vmap(body_step)(
+            gvel_next.data, state.conf.pos, state.conf.rot
+        )
         scalar_next = state.conf.scalar + self.h * gvel_next.scalar
         conf_next = Configuration(
             pos=pos_next,
             rot=rot_next,
             scalar=scalar_next,
         )
-        state_next = state.replace(conf=conf_next, gvel=gvel_next, multipliers=multipliers, residual=residual)
+        state_next = state.replace(
+            conf=conf_next, gvel=gvel_next, multipliers=multipliers, residual=residual
+        )
         return state_next
 
-    def observe(self, state: State, gvel_next: GeneralizedVelocity, param: SimulationParameters) -> jax.Array:
+    def observe(
+        self, state: State, gvel_next: GeneralizedVelocity, param: SimulationParameters
+    ) -> jax.Array:
         """
         Observe the state using the simulation sensors
 
@@ -286,7 +296,9 @@ class Simulation:
         for component in self.pre_step_modifiers:
             state, param = component.update_params(state, action, param)
 
-        M_stacked, M_inv_stacked, G, Sigma_data, b_data = self._assemble_blocks(state, param)
+        M_stacked, M_inv_stacked, G, Sigma_data, b_data = self._assemble_blocks(
+            state, param
+        )
         G_dense = G.to_scalar_matrix()
         M = jax.scipy.linalg.block_diag(*M_stacked)
         M_Sigma = M + G_dense.T @ jnp.diag(1 / Sigma_data) @ G_dense
@@ -311,10 +323,14 @@ class Simulation:
             gyroscopic_linear_force = -jnp.cross(ang, jnp.cross(ang, mc))
             torque_ext = jnp.cross(mc, g)
 
-            genelarized_force = jnp.concatenate([force_ext + gyroscopic_linear_force, torque_ext + gyroscopic_torque])
+            genelarized_force = jnp.concatenate(
+                [force_ext + gyroscopic_linear_force, torque_ext + gyroscopic_torque]
+            )
             return genelarized_force
 
-        gforces = jax.vmap(force_per_body)(param.rigid_body_param, state.conf.rot, state.gvel.data)
+        gforces = jax.vmap(force_per_body)(
+            param.rigid_body_param, state.conf.rot, state.gvel.data
+        )
         scalar_body_forces = jnp.zeros_like(state.conf.scalar)
         combined_gforces = jnp.concatenate([gforces.flatten(), scalar_body_forces])
 
@@ -375,7 +391,9 @@ class Simulation:
                 self.h,
                 f_ext.flatten(),
                 b_data,
-                lbda_limits=jnp.vstack([jnp.full((nc,), -jnp.inf), jnp.full((nc,), jnp.inf)]),
+                lbda_limits=jnp.vstack(
+                    [jnp.full((nc,), -jnp.inf), jnp.full((nc,), jnp.inf)]
+                ),
                 Nit=self.settings.pgs_iterations,
             )
         elif self.settings.solver == Solver.SPARSE_PGS:
@@ -390,17 +408,25 @@ class Simulation:
                 self.h,
                 f_ext.flatten(),
                 b_data,
-                lbda_limits=jnp.vstack([jnp.full((nc,), -jnp.inf), jnp.full((nc,), jnp.inf)]),
+                lbda_limits=jnp.vstack(
+                    [jnp.full((nc,), -jnp.inf), jnp.full((nc,), jnp.inf)]
+                ),
                 Nit=self.settings.pgs_iterations,
             )
         else:
             raise NotImplementedError
         code = 0
-        gvel_next = GeneralizedVelocity(qdot_next[:n_rb_dof].reshape(-1, 6), qdot_next[n_rb_dof:])
+        gvel_next = GeneralizedVelocity(
+            qdot_next[:n_rb_dof].reshape(-1, 6), qdot_next[n_rb_dof:]
+        )
         return (gvel_next, lbda, res), code
 
-    def _assemble_mass_matrix(self, state: State, param: SimulationParameters) -> SVBDMatrix:
-        def assemble_mass_block(rb_param: RigidBodyParameters, rot: jax.Array) -> Tuple[jax.Array, jax.Array]:
+    def _assemble_mass_matrix(
+        self, state: State, param: SimulationParameters
+    ) -> SVBDMatrix:
+        def assemble_mass_block(
+            rb_param: RigidBodyParameters, rot: jax.Array
+        ) -> Tuple[jax.Array, jax.Array]:
             m = rb_param.mass
             J = rb_param.get_inertia_matrix()
             R = jit(math.rotation_matrix)(rot)
@@ -413,7 +439,9 @@ class Simulation:
             M = jnp.block([[mass_block, -mc_skew], [mc_skew, inertia_block]])
             return M, jnp.linalg.inv(M)
 
-        M_stack, M_inv_stack = jax.vmap(assemble_mass_block)(param.rigid_body_param, state.conf.rot)
+        M_stack, M_inv_stack = jax.vmap(assemble_mass_block)(
+            param.rigid_body_param, state.conf.rot
+        )
         M_scalar = param.scalar_body_param.inertia[:, None, None]
         M_scalar_inv = 1 / param.scalar_body_param.inertia[:, None, None]
         M_data = jnp.concatenate([M_stack, M_scalar], axis=None)
@@ -456,10 +484,14 @@ class Simulation:
             parameter_group_name = identifier.get_parameter_group_names()[0]
             if not identifier == previous_identifier:
                 if previous_identifier:
-                    constraint_group_list.append((previous_identifier, first_id, first_pg_id, group))
+                    constraint_group_list.append(
+                        (previous_identifier, first_id, first_pg_id, group)
+                    )
                 group = []
                 first_id = i
-                first_pg_id = constraint_parameter_group_counter.get(parameter_group_name, 0)
+                first_pg_id = constraint_parameter_group_counter.get(
+                    parameter_group_name, 0
+                )
                 parameter_group_name = identifier.get_parameter_group_names()[0]
 
             group.append((constraint))
@@ -486,8 +518,12 @@ class Simulation:
             param.rigid_body_param.names,
             param.scalar_body_param.names,
         )
-        assert set([c.name for c in self.rigid_body_list]).issubset(set(param.rigid_body_param.names))
-        assert set([c.name for c in self.constraint_list]).issubset(set(param.constraint_param.names))
+        assert set([c.name for c in self.rigid_body_list]).issubset(
+            set(param.rigid_body_param.names)
+        )
+        assert set([c.name for c in self.constraint_list]).issubset(
+            set(param.constraint_param.names)
+        )
 
         G_rsi_list = list(G_rsi.values())
         G_row_indices = np.cumsum(G_row_sizes) - G_row_sizes
@@ -517,22 +553,40 @@ class Simulation:
             # Get the body indices (integers) from body names (strings)
 
             # Depending on the type of constrained bodies, different sets of parameters are needed
-            body_params = [param.get_value_at_path(path) for path in Constraint.get_body_group_names()]
+            body_params = [
+                param.get_value_at_path(path)
+                for path in Constraint.get_body_group_names()
+            ]
             body_ids = tuple(
-                jnp.array([body_param.names.index(constraint.bodies[i]) for constraint in constraint_group])
+                jnp.array(
+                    [
+                        body_param.names.index(constraint.bodies[i])
+                        for constraint in constraint_group
+                    ]
+                )
                 for i, body_param in enumerate(body_params)
             )
 
             # Depending on the number of constrained degrees, different sets of constraint parameters are needed
-            constraint_params = [param.get_value_at_path(path) for path in Constraint.get_parameter_group_names()]
+            constraint_params = [
+                param.get_value_at_path(path)
+                for path in Constraint.get_parameter_group_names()
+            ]
             # Get the constraint indices (integers) from constraint names (strings). The constraint indices might belong to different parameter groups
             constraint_ids = tuple(
-                jnp.array([constraint_param.names.index(constraint.names[i]) for constraint in constraint_group])
+                jnp.array(
+                    [
+                        constraint_param.names.index(constraint.names[i])
+                        for constraint in constraint_group
+                    ]
+                )
                 for i, constraint_param in enumerate(constraint_params)
             )
 
             # Stack constraint types as a jnp.array
-            constraint_residuals = jnp.array([constraint.constraint_residual for constraint in constraint_group])
+            constraint_residuals = jnp.array(
+                [constraint.constraint_residual for constraint in constraint_group]
+            )
 
             # Compute Jacobians and constraint offsets
             G_blocks = jax.vmap(Constraint.jacobian, (None, None, 0, 0, 0))(
@@ -553,7 +607,9 @@ class Simulation:
             # Copy the Jacobian data from the constraint group to the full Jacobian
             ptr = G_rsi_list[G_row_ptr[first_index]]
             row_slice_begin = G_row_indices[first_index]
-            G_data = G_data.at[ptr : ptr + G_blocks.flatten().shape[0]].set(G_blocks.flatten())
+            G_data = G_data.at[ptr : ptr + G_blocks.flatten().shape[0]].set(
+                G_blocks.flatten()
+            )
 
             # Get the index slice corresponding to this constraint group
             # This slice is used to constraint parameters
@@ -574,13 +630,22 @@ class Simulation:
             is_locked = jnp.logical_not(not_locked)
 
             # Problem: What if Lie group / Manifold? Comparing Lie algebra objects?
-            offsets = jax.vmap(Constraint.compute_offset)(default_offsets, target, constraint_residuals)
+            offsets = jax.vmap(Constraint.compute_offset)(
+                default_offsets, target, constraint_residuals
+            )
 
-            regularization = holonomic_regularization * is_locked + nonholonomic_regularization * not_locked
+            regularization = (
+                holonomic_regularization * is_locked
+                + nonholonomic_regularization * not_locked
+            )
 
             # Copy regularization of this constraint group to the full regularization vector
-            row_slice_end = row_slice_begin + Constraint.get_constrained_degrees() * group_size
-            Sigma_data = Sigma_data.at[row_slice_begin:row_slice_end].set(regularization.flatten())
+            row_slice_end = (
+                row_slice_begin + Constraint.get_constrained_degrees() * group_size
+            )
+            Sigma_data = Sigma_data.at[row_slice_begin:row_slice_end].set(
+                regularization.flatten()
+            )
 
             # Compute Jacobian times velocity (TODO: Consider abstraction in GeneralizedVelocity)
             # proj_vel = G @ u = G1 @ u + G2 @ u + ... = [G1x ux G1z uz].T +
@@ -605,7 +670,9 @@ class Simulation:
 
                 return jnp.stack(results)
 
-            proj_vels = jax.vmap(stack_multiply, in_axes=(0, 0, None))(G_blocks, jnp_body_ids, state.gvel)
+            proj_vels = jax.vmap(stack_multiply, in_axes=(0, 0, None))(
+                G_blocks, jnp_body_ids, state.gvel
+            )
             proj_vel = jnp.sum(proj_vels, axis=1)
 
             # Compute the rhs vector
@@ -652,7 +719,9 @@ class Simulation:
             # Want to find the column indices (cols1) and the correct slice of data (data1)
             r1_slice = (G.row_ptr[i], G.row_ptr[i + 1])
             cols1 = G.col_indices[r1_slice[0] : r1_slice[1]]
-            slice_end1 = slice_begin1 + sum(G.col_sizes[c] * G.row_sizes[i] for c in cols1)
+            slice_end1 = slice_begin1 + sum(
+                G.col_sizes[c] * G.row_sizes[i] for c in cols1
+            )
             data1 = G.data[slice_begin1:slice_end1]
             slice_begin2 = 0
             sigma_slice_end = sigma_slice_begin + block_sizes[i]
@@ -661,7 +730,9 @@ class Simulation:
                 # Want to find the column indices (cols2) and the correct slice of data (data2)
                 r2_slice = (G.row_ptr[j], G.row_ptr[j + 1])
                 cols2 = G.col_indices[r2_slice[0] : r2_slice[1]]
-                slice_end2 = slice_begin2 + sum(G.col_sizes[c] * G.row_sizes[j] for c in cols2)
+                slice_end2 = slice_begin2 + sum(
+                    G.col_sizes[c] * G.row_sizes[j] for c in cols2
+                )
                 if (i, j) in rsi_dict:
                     data2 = G.data[slice_begin2:slice_end2]
                     res, intersection_empty = _bdot_over_intersection(
@@ -675,12 +746,16 @@ class Simulation:
                         G.col_sizes,
                     )
                     if i == j:
-                        res = res + jnp.diag(Sigma_data[sigma_slice_begin:sigma_slice_end])
+                        res = res + jnp.diag(
+                            Sigma_data[sigma_slice_begin:sigma_slice_end]
+                        )
                         pass
                     if not intersection_empty:
                         rsi_slice_begin = rsi_dict[(i, j)]
                         rsi_slice_end = rsi_slice_begin + res.shape[0] * res.shape[1]
-                        S_data = S_data.at[rsi_slice_begin:rsi_slice_end].set(res.flatten())
+                        S_data = S_data.at[rsi_slice_begin:rsi_slice_end].set(
+                            res.flatten()
+                        )
                         # S_data[rsi_slice_begin:rsi_slice_end] = res.flatten()
                 slice_begin2 = slice_end2
             sigma_slice_begin = sigma_slice_end
@@ -690,7 +765,11 @@ class Simulation:
         return S, rsi_dict
 
     def _assemble_constraint_metadata(self):
-        return {"constraint_residual": jnp.array([c.constraint_residual for c in self.constraint_list])}
+        return {
+            "constraint_residual": jnp.array(
+                [c.constraint_residual for c in self.constraint_list]
+            )
+        }
 
 
 def _bdot_over_intersection(
