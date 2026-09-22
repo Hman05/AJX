@@ -233,7 +233,7 @@ class ParameterNode:
                 raise Exception
 
         return new
-    
+
     def log_map(self, other: ParameterNode) -> jax.Array:
         """
         Return the flattened tangent-space difference between this node and another node.

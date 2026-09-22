@@ -88,18 +88,26 @@ class CoupleConstraints(PreStepModifier):
             self.constraint_residual,
         )
         compliance = jnp.clip(
-            1 / (ccp.linear_stiffness.data + jnp.abs(offsets) * ccp.quadratic_stiffness.data),
+            1
+            / (
+                ccp.linear_stiffness.data
+                + jnp.abs(offsets) * ccp.quadratic_stiffness.data
+            ),
             1e-6,
             1e8,
         )
         constraint_param = constraint_param.replace(
-            compliance=constraint_param.compliance.at[slice_begin:slice_end].set(compliance)
+            compliance=constraint_param.compliance.at[slice_begin:slice_end].set(
+                compliance
+            )
         )
         constraint_param = constraint_param.replace(
             damping=constraint_param.damping.at[slice_begin:slice_end].set(ccp.damping)
         )
         constraint_param = constraint_param.replace(
-            is_velocity=constraint_param.is_velocity.at[slice_begin:slice_end].set(ccp.is_velocity)
+            is_velocity=constraint_param.is_velocity.at[slice_begin:slice_end].set(
+                ccp.is_velocity
+            )
         )
         new_param = param.replace(constraint_param=constraint_param)
         return state, new_param
@@ -118,16 +126,26 @@ class LockAtZeroSpeedMotor(PreStepModifier):
         not_lock = jnp.logical_not(lock)
         current_offset = self.constraint.object_func(state, param)[self.target_dof]
         target = state.lock_targets[self.lock_idx] * lock + u[self.u_idx] * not_lock
-        new_lock_target = state.lock_targets[self.lock_idx] * lock + current_offset * not_lock
-        state = state.replace(lock_targets=state.lock_targets.at[self.lock_idx].set(new_lock_target))
+        new_lock_target = (
+            state.lock_targets[self.lock_idx] * lock + current_offset * not_lock
+        )
+        state = state.replace(
+            lock_targets=state.lock_targets.at[self.lock_idx].set(new_lock_target)
+        )
         param_w_is_velocity = param.tree_replace(
             {
-                f"constraint_param.is_velocity.{self.constraint.name}": {self.target_dof: not_lock},
+                f"constraint_param.is_velocity.{self.constraint.name}": {
+                    self.target_dof: not_lock
+                },
             }
         )
         return state, (
             param_w_is_velocity.tree_replace(
-                {f"constraint_param.target.{self.constraint.name}": {self.target_dof: target}}
+                {
+                    f"constraint_param.target.{self.constraint.name}": {
+                        self.target_dof: target
+                    }
+                }
             )
         )
 
@@ -150,7 +168,9 @@ class DLOAttached(Environment):
         self._build_sim(sim_settings)
         self.dynamic_residual_names = self.get_state_residual_names()
 
-        self.camera_pos = jnp.array([self.env_settings.body_length * self.env_settings.n_bodies, 15.0, 0.0])
+        self.camera_pos = jnp.array(
+            [self.env_settings.body_length * self.env_settings.n_bodies, 15.0, 0.0]
+        )
         self.camera_rot = math.quat_from_axis_angle(jnp.array([0.0, 0.0, 1.0]), jnp.pi)
         self.initial_control_state = (False, False)
 
@@ -165,7 +185,9 @@ class DLOAttached(Environment):
         gradient_start = jnp.array([1.0, 0.0, 0.0])
         gradient_end = jnp.array([0.0, 1.0, 1.0])
         n = self.env_settings.n_bodies
-        gradient = gradient_start - jnp.outer(jnp.arange(n), (gradient_start - gradient_end) / n)
+        gradient = gradient_start - jnp.outer(
+            jnp.arange(n), (gradient_start - gradient_end) / n
+        )
         density = self.env_settings.mass_density
 
         for i in range(self.env_settings.n_bodies):
@@ -194,8 +216,12 @@ class DLOAttached(Environment):
                     name=f"body{i}",
                 )
             )
-        rotation1 = math.quat_from_axis_angle(jnp.array([-1.0, 0.0, 0.0]), -0.0 * jnp.pi)
-        rotation2 = math.quat_from_axis_angle(jnp.array([-1.0, 0.0, 0.0]), -0.0 * jnp.pi)
+        rotation1 = math.quat_from_axis_angle(
+            jnp.array([-1.0, 0.0, 0.0]), -0.0 * jnp.pi
+        )
+        rotation2 = math.quat_from_axis_angle(
+            jnp.array([-1.0, 0.0, 0.0]), -0.0 * jnp.pi
+        )
 
         if self.env_settings.hinge_motor_attachment:
             self.attachment_constraint = OneBodyConstraint(
@@ -254,7 +280,9 @@ class DLOAttached(Environment):
         rb_param = RigidBodyParameters.concatenate([*arms_param])
         rigid_bodies = tuple([*arms])
 
-        constraint_param = ConstraintParameters.concatenate([attachment_constraint_param, *lock_joint_param])
+        constraint_param = ConstraintParameters.concatenate(
+            [attachment_constraint_param, *lock_joint_param]
+        )
         constraints = tuple([self.attachment_constraint, *self.lock_joints])
 
         # n_constraints = one per body + one
@@ -274,7 +302,9 @@ class DLOAttached(Environment):
         )
 
         if self.env_settings.hinge_motor_attachment:
-            hinge_motor = LockAtZeroSpeedMotor("hinge_motor", self.attachment_constraint, 0, 0, 5)
+            hinge_motor = LockAtZeroSpeedMotor(
+                "hinge_motor", self.attachment_constraint, 0, 0, 5
+            )
             pre_step_modifiers = (couple_constraints, hinge_motor)
         else:
             pre_step_modifiers = (couple_constraints,)
@@ -288,7 +318,9 @@ class DLOAttached(Environment):
 
         # point_set = [(i, offset) for offset in offsets for i in range(n)]
         temp_limit = 1
-        point_set = [(i + 1, offset) for i in range(max(n, temp_limit)) for offset in offsets]
+        point_set = [
+            (i + 1, offset) for i in range(max(n, temp_limit)) for offset in offsets
+        ]
         # point_set5 = [(i, jnp.array([-bl, 0.1, 0.1])) for i in range(n)]
         # point_set6 = [(i, jnp.array([-bl, 0.1, -0.1])) for i in range(n)]
         # point_set7 = [(i, jnp.array([-bl, -0.1, 0.1])) for i in range(n)]
@@ -332,20 +364,30 @@ class DLOAttached(Environment):
                 400.0,
                 400.0,
                 translation=(bl * self.env_settings.n_bodies, 0.0, -100.0),
-                rotation=math.quat_from_axis_angle(jnp.array([1.0, 0.0, 0.0]), jnp.pi / 2),
+                rotation=math.quat_from_axis_angle(
+                    jnp.array([1.0, 0.0, 0.0]), jnp.pi / 2
+                ),
                 color=(0.3, 0.3, 0.4),
             ),
         ]
 
     def observation_to_configuration(self, observation, param):
-        world_transform = Transform(jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0]))
+        world_transform = Transform(
+            jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
+        )
 
         body_transforms = []
-        body_transforms.append(self.attachment_constraint.place_other(param, world_transform, 0))
+        body_transforms.append(
+            self.attachment_constraint.place_other(param, world_transform, 0)
+        )
         for i in range(len(self.lock_joints)):
-            new_transform = self.lock_joints[i].place_other(0, param, body_transforms[-1], 0)
+            new_transform = self.lock_joints[i].place_other(
+                0, param, body_transforms[-1], 0
+            )
             body_transforms.append(new_transform)
-        return Configuration.concatenate([body_transform.to_configuration() for body_transform in body_transforms])
+        return Configuration.concatenate(
+            [body_transform.to_configuration() for body_transform in body_transforms]
+        )
 
     def state_from_angles(self, param):
 
@@ -359,7 +401,11 @@ class DLOAttached(Environment):
         multipliers = jnp.zeros([multipliers_size])
 
         return DLOState(
-            initial_conf, initial_gvel, targets, multipliers=multipliers, residual=jnp.zeros_like(multipliers)
+            initial_conf,
+            initial_gvel,
+            targets,
+            multipliers=multipliers,
+            residual=jnp.zeros_like(multipliers),
         )
 
     def get_stiffness_from_material_parameters(self, youngs_modulus, shear_modulus):
@@ -369,7 +415,9 @@ class DLOAttached(Environment):
 
         area = s**2  # Cross-sectional area
         area_moment = s**4 / 12  # Second moment of area
-        polar_moment = s**4 / 6  # Second polar moment of area, assumes square cross section
+        polar_moment = (
+            s**4 / 6
+        )  # Second polar moment of area, assumes square cross section
 
         # Stiffness values per segment
         axial_stiffness = youngs_modulus * area / l
@@ -396,14 +444,18 @@ class DLOAttached(Environment):
         motor4 = 0.0
         motor5 = 0.0
         motor6 = 0.0
-        if (key_map["l"] and key_map["h"]) or (key_map["arrow_left"] and key_map["arrow_right"]):
+        if (key_map["l"] and key_map["h"]) or (
+            key_map["arrow_left"] and key_map["arrow_right"]
+        ):
             motor1 = 0.0
         elif key_map["h"] or key_map["arrow_left"]:
             motor1 = 3.0  # -0.5
         elif key_map["l"] or key_map["arrow_right"]:
             motor1 = -3.0  # 0.5
 
-        if (key_map["j"] and key_map["k"]) or (key_map["arrow_down"] and key_map["arrow_up"]):
+        if (key_map["j"] and key_map["k"]) or (
+            key_map["arrow_down"] and key_map["arrow_up"]
+        ):
             motor3 = 0.0
         elif key_map["j"] or key_map["arrow_down"]:
             motor3 = -3.0

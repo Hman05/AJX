@@ -36,7 +36,9 @@ class FreeBody(Environment):
         )
 
         self.body = RigidBody("body", [("box", Transform.identity)])
-        body_param = RigidBodyParameters.create(mass=1.0, inertia_diag=inertia, name="body")
+        body_param = RigidBodyParameters.create(
+            mass=1.0, inertia_diag=inertia, name="body"
+        )
         rb_param = body_param
         rigid_bodies = (self.body,)
         constraint_param = ConstraintParameters.create_empty()
@@ -60,7 +62,9 @@ class FreeBody(Environment):
             constraint_param,
             sparse_param=FreeBodySparseParam(),
         )
-        self.ground = geometry.Square("ground", 1.5, 1.5, (0.0, -3.0, 0.0), color=(0.2, 0.5, 0.2))
+        self.ground = geometry.Square(
+            "ground", 1.5, 1.5, (0.0, -3.0, 0.0), color=(0.2, 0.5, 0.2)
+        )
 
         self.geometry_list = (self.box, self.ground)
         self.extra_geometry = [("ground", Transform.identity())]
@@ -71,7 +75,9 @@ class FreeBody(Environment):
         return Configuration(pos, rot)
 
     def state_from_angular_velocity(self, angvel):
-        initial_conf = Configuration(jnp.array([[0.0, 0.0, 0.0]]), jnp.array([[1.0, 0.0, 0.0, 0.0]]))
+        initial_conf = Configuration(
+            jnp.array([[0.0, 0.0, 0.0]]), jnp.array([[1.0, 0.0, 0.0, 0.0]])
+        )
         initial_linear_velocity = jnp.array([0.0, 0.0, 0.0])
         initial_gvel = jnp.concatenate([initial_linear_velocity, angvel])
         initial_gvel = GeneralizedVelocity(initial_gvel[None])

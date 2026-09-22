@@ -29,17 +29,17 @@ class RowGroup:
     def col_sizes(self):
         shape = np.frombuffer(self.byte_col_sizes_shape, dtype=np.int64)
         return np.frombuffer(self.byte_col_sizes, dtype=np.int64).reshape(shape)
-    
+
     @property
     def col_indices(self):
         shape = np.frombuffer(self.byte_col_indices_shape, dtype=np.int64)
         return np.frombuffer(self.byte_col_indices, dtype=np.int64).reshape(shape)
-    
+
     @property
     def col_offsets(self):
         shape = np.frombuffer(self.byte_col_offsets_shape, dtype=np.int64)
         return np.frombuffer(self.byte_col_offsets, dtype=np.int64).reshape(shape)
-    
+
     @property
     def col_sq_offsets(self):
         shape = np.frombuffer(self.byte_col_sq_offsets_shape, dtype=np.int64)
@@ -47,7 +47,7 @@ class RowGroup:
 
     @classmethod
     def create(
-        cls, 
+        cls,
         offset: int,
         row_size: int,
         n_blocks: int,
@@ -57,18 +57,18 @@ class RowGroup:
         col_sq_offsets: npt.NDArray[np.int64],
     ):
         return RowGroup(
-            offset, 
-            row_size, 
-            n_blocks, 
-            np.array(col_sizes).tobytes(), 
-            np.array(col_indices).tobytes(), 
-            np.array(col_offsets).tobytes(), 
+            offset,
+            row_size,
+            n_blocks,
+            np.array(col_sizes).tobytes(),
+            np.array(col_indices).tobytes(),
+            np.array(col_offsets).tobytes(),
             np.array(col_sq_offsets).tobytes(),
             np.array(col_sizes.shape).tobytes(),
             np.array(col_indices.shape).tobytes(),
             np.array(col_offsets.shape).tobytes(),
             np.array(col_sq_offsets.shape).tobytes(),
-            )
+        )
 
 
 @struct.dataclass
@@ -146,13 +146,13 @@ class VBRMatrix(BlockMatrixBase):
         rows = sum(r for r in self.row_sizes)
         cols = sum(c for c in self.col_sizes)
         return (rows, cols)
-    
+
     @property
     def row_groups(self):
         """
-        Computes the row groups in this matrix from matrix data 
+        Computes the row groups in this matrix from matrix data
         """
-        
+
         col_sizes_per_row = np.split(
             self.col_sizes[self.col_indices], self.row_ptr[1:-1]
         )
@@ -230,26 +230,16 @@ class VBRMatrix(BlockMatrixBase):
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         return cls(*children, *aux_data)
-    """
-    def get_row_from_group(self, group_offset, group_id, row_size, col_sizes):
-        local_offset = row_size * np.sum(col_sizes) * group_id
-        matrices = []
-        for col_size in col_sizes:
-            mat = jax.lax.dynamic_slice(
-                self.data, (group_offset + local_offset,), (col_size * row_size).item()
-            ).reshape(row_size, col_size)
-            local_offset += row_size * col_size
-            matrices.append(mat)
-        return matrices
-    """
 
     def get_row_from_group(self, group_offset, group_id, row_size, col_sizes):
         total = int(row_size * np.sum(col_sizes))
-        row_flat = jax.lax.dynamic_slice(self.data, (group_offset + total * group_id,), (total,))
+        row_flat = jax.lax.dynamic_slice(
+            self.data, (group_offset + total * group_id,), (total,)
+        )
         matrices, off = [], 0
         for col_size in col_sizes:
             size = int(row_size * col_size)
-            matrices.append(row_flat[off:off + size].reshape(row_size, col_size))
+            matrices.append(row_flat[off : off + size].reshape(row_size, col_size))
             off += size
         return matrices
 
@@ -323,7 +313,7 @@ class VBRMatrix(BlockMatrixBase):
                 slice_begin = slice_end
 
         return res
-    
+
     def grouped_vector_mul(self, vec):
         res = jnp.zeros(sum(self.col_sizes))
         row_groups = self.row_groups
@@ -335,7 +325,7 @@ class VBRMatrix(BlockMatrixBase):
             col_offsets = group.col_offsets
 
             def vector_mul_block_row(j, res):
-                vec_slice_begin = group_vec_slice_begin + j*row_size
+                vec_slice_begin = group_vec_slice_begin + j * row_size
                 vec_slice = jax.lax.dynamic_slice(vec, (vec_slice_begin,), (row_size,))
                 mat = self.get_row_from_group(group.offset, j, row_size, col_sizes)
                 for k, local_res in enumerate([vec_slice @ A for A in mat]):
@@ -343,11 +333,10 @@ class VBRMatrix(BlockMatrixBase):
                     old = jax.lax.dynamic_slice(res, (idx,), (local_res.shape[0],))
                     res = jax.lax.dynamic_update_slice(res, old + local_res, (idx,))
                 return res
-            
-            res = jax.lax.fori_loop(0, num_blocks_rows, vector_mul_block_row, res)
-            group_vec_slice_begin += num_blocks_rows*row_size
-        return res
 
+            res = jax.lax.fori_loop(0, num_blocks_rows, vector_mul_block_row, res)
+            group_vec_slice_begin += num_blocks_rows * row_size
+        return res
 
     def plot(self):
         import matplotlib.pyplot as plt
