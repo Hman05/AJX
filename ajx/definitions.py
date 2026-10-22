@@ -147,6 +147,13 @@ class State(ParameterNode):
     residual: jax.Array = struct.field(default_factory=lambda: jnp.zeros([0]))
 
 
+# Frame and Frames hold the same data as Transform, a frame being the transform
+# from frame to body coordinates. They should be merged with Transform in the
+# future (which requires a stacked Transform and renaming position/rotation to
+# pos/rot). Until then, retract and log_map delegate to Transform so that frames
+# use the same retraction as other poses
+
+
 @struct.dataclass
 class Frame(ParameterNode):
     position: jnp.array
@@ -154,6 +161,19 @@ class Frame(ParameterNode):
 
     def to_frames(self):
         return Frames(self.position[None], self.rotation[None])
+
+    def as_transform(self):
+        return Transform(self.position, self.rotation)
+
+    def tangent_size(self):
+        return self.as_transform().tangent_size()
+
+    def retract(self, delta):
+        new = self.as_transform().retract(delta)
+        return Frame(new.pos, new.rot)
+
+    def log_map(self, other: Frame):
+        return self.as_transform().log_map(other.as_transform())
 
 
 @struct.dataclass
@@ -163,6 +183,23 @@ class Frames(ParameterNode):
 
     def as_vectorized_transform(self):
         return Transform(self.position, self.rotation)
+
+    def tangent_size(self):
+        assert self.position.ndim == 2 and self.position.shape[1] == 3
+        assert self.rotation.shape == (self.position.shape[0], 4)
+        return 6 * self.position.shape[0]
+
+    def retract(self, delta):
+        assert delta.shape == (self.tangent_size(),)
+        frame_delta = delta.reshape(-1, 6)
+        new = vmap(Transform.retract)(self.as_vectorized_transform(), frame_delta)
+        return Frames(new.pos, new.rot)
+
+    def log_map(self, other: Frames):
+        residual = vmap(Transform.log_map)(
+            self.as_vectorized_transform(), other.as_vectorized_transform()
+        )
+        return residual.reshape(-1)
 
 
 @struct.dataclass
