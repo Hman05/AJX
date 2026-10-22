@@ -16,6 +16,7 @@ from ajx.constraints.base import (
     get_frame_transform,
     get_frame_transform_ext,
     place_body_b,
+    wrapped_offset,
 )
 
 
@@ -86,18 +87,7 @@ class TwoBodyConstraint(Constraint):
         target: jax.Array,
         constraint_residual: ConstraintResidual,
     ):
-        rotational_degrees = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=bool) * (
-            constraint_residual == ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value
-        )
-        linear_degrees = jnp.logical_not(rotational_degrees)
-        linear_degrees = jnp.logical_not(rotational_degrees)
-
-        linear_offset = (default_offset - target) * linear_degrees
-        roational_offset = (
-            (default_offset - target + jnp.pi) % (2 * jnp.pi) - jnp.pi
-        ) * rotational_degrees
-
-        return linear_offset + roational_offset
+        return wrapped_offset(default_offset, target, constraint_residual)
 
     def object_func(
         self,
@@ -295,14 +285,14 @@ class TwoBodyConstraint(Constraint):
                 jnp.concatenate([spherical_b, dot1_1_b, dot1_2_b, u_a_tangent_b]),
             ],
             axis=None,
-        ) * (constraint_residual == 0)
+        ) * (constraint_residual == ConstraintResidual.AXIAL_WORLD_SPHERICAL.value)
         jac_prismatic = jnp.concatenate(
             [
                 jnp.concatenate([co_spherical_a, dot1_1_a, dot1_2_a, u_a_tangent_a]),
                 jnp.concatenate([co_spherical_b, dot1_1_b, dot1_2_b, u_a_tangent_b]),
             ],
             axis=None,
-        ) * (constraint_residual == 1)
+        ) * (constraint_residual == ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value)
         jac_se3 = jnp.concatenate(
             [
                 jnp.concatenate([co_spherical_a, so3_err_a]),

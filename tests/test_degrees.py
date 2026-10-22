@@ -5,6 +5,7 @@ import pytest
 
 import ajx.math as math
 from ajx.constraints import ConstraintResidual, OneBodyConstraint, TwoBodyConstraint
+from ajx.constraints.base import is_wrapped_degree
 from ajx.definitions import (
     Configuration,
     ConstraintParameters,
@@ -263,3 +264,37 @@ def test_degree_encoder_wraps_only_hinge_degrees(residual, degree):
     expected = 6.0 - 2 * jnp.pi if is_hinge else 6.0
     np.testing.assert_allclose(encoder.residual(target, prediction), [expected])
     assert encoder.observable_names == (["theta"] if is_hinge else ["x"])
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+@pytest.mark.parametrize("residual", list(ConstraintResidual), ids=lambda r: r.name)
+def test_place_frame_a_puts_all_degrees_at_zero(residual, seed):
+    rng = np.random.default_rng(seed)
+    param = make_param(rng)
+    constraint = make_constraint(OneBodyConstraint, residual)
+    state = make_state(random_transform(rng), random_transform(rng))
+    frame_a = constraint.place_frame_a(state, param)
+    cp = param.constraint_param
+    param = param.replace(
+        constraint_param=cp.replace(
+            frame_a=cp.frame_a.replace(
+                position=cp.frame_a.position.at[0].set(frame_a.pos),
+                rotation=cp.frame_a.rotation.at[0].set(frame_a.rot),
+            )
+        )
+    )
+    np.testing.assert_allclose(constraint.object_func(state, param), 0.0, atol=1e-10)
+
+
+@pytest.mark.parametrize("residual", list(ConstraintResidual), ids=lambda r: r.name)
+@pytest.mark.parametrize("Constraint", CONSTRAINT_TYPES, ids=lambda c: c.__name__)
+def test_compute_offset_wraps_only_hinge_degrees(Constraint, residual):
+    # Offsets of 6 from a target of -3 to a value of 3, which wrap to 6 - 2 pi
+    offset = Constraint.compute_offset(
+        jnp.full(6, 3.0), jnp.full(6, -3.0), residual.value
+    )
+    expected = [
+        6.0 - 2 * jnp.pi if is_wrapped_degree(residual, degree) else 6.0
+        for degree in range(6)
+    ]
+    np.testing.assert_allclose(offset, expected, atol=1e-12)

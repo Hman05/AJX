@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 
 import ajx.math as math
+import jax
 from jax import jit
 import jax.numpy as jnp
 
@@ -63,6 +64,26 @@ def is_wrapped_degree(constraint_residual, degree: int) -> bool:
         ConstraintResidual(constraint_residual) in AXIAL_RESIDUALS
         and degree == HINGE_DEGREE
     )
+
+
+def wrapped_degrees(constraint_residual) -> jax.Array:
+    """
+    Mask of the degrees that wrap around at +-pi (see is_wrapped_degree). The
+    residual type may be traced.
+    """
+    axial_values = jnp.array([residual.value for residual in AXIAL_RESIDUALS])
+    is_axial = jnp.any(axial_values == constraint_residual)
+    return jnp.zeros(6, dtype=bool).at[HINGE_DEGREE].set(is_axial)
+
+
+def wrapped_offset(default_offset, target, constraint_residual) -> jax.Array:
+    """
+    The offset default_offset - target of the residual from its target, wrapped to
+    [-pi, pi) for the degrees that wrap around
+    """
+    offset = default_offset - target
+    wrapped = (offset + jnp.pi) % (2 * jnp.pi) - jnp.pi
+    return jnp.where(wrapped_degrees(constraint_residual), wrapped, offset)
 
 
 def place_body_b(

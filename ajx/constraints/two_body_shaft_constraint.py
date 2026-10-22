@@ -227,7 +227,7 @@ class TwoBodyShaftConstraint(Constraint):
                 jnp.array([-gear_ratio]),
             ],
             axis=None,
-        ) * (constraint_residual == 0)
+        ) * (constraint_residual == ConstraintResidual.AXIAL_WORLD_SPHERICAL.value)
         jac_prismatic = jnp.concatenate(
             [
                 jnp.concatenate([dot2_3_a]),
@@ -235,6 +235,6 @@ class TwoBodyShaftConstraint(Constraint):
                 jnp.array([-gear_ratio]),
             ],
             axis=None,
-        ) * (constraint_residual == 1)
+        ) * (constraint_residual == ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value)
 
         return jac_hinge + jac_prismatic

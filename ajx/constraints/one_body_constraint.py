@@ -17,6 +17,7 @@ from ajx.constraints.base import (
     get_frame_transform,
     get_frame_transform_ext,
     place_body_b,
+    wrapped_offset,
 )
 
 
@@ -79,28 +80,7 @@ class OneBodyConstraint(Constraint):
         target: jax.Array,
         constraint_residual: ConstraintResidual,
     ):
-        hinge_rotational_degrees = jnp.array(
-            [0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=bool
-        ) * (constraint_residual == ConstraintResidual.AXIAL_WORLD_SPHERICAL.value)
-        prismatic_rotational_degrees = jnp.array(
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=bool
-        ) * (constraint_residual == ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value)
-        se3_rotational_degrees = jnp.array(
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=bool
-        ) * (constraint_residual == ConstraintResidual.SE3.value)
-        rotational_degrees = (
-            hinge_rotational_degrees
-            + prismatic_rotational_degrees
-            + se3_rotational_degrees
-        )
-        linear_degrees = jnp.logical_not(rotational_degrees)
-
-        linear_offset = (default_offset - target) * linear_degrees
-        roational_offset = (
-            (default_offset - target + jnp.pi) % (2 * jnp.pi) - jnp.pi
-        ) * rotational_degrees
-
-        return linear_offset + roational_offset
+        return wrapped_offset(default_offset, target, constraint_residual)
 
     def object_func(
         self,
@@ -277,12 +257,12 @@ class OneBodyConstraint(Constraint):
 
         jac_hinge = jnp.concatenate(
             [spherical_b, dot1_1_b, dot1_2_b, u_a_tangent_b], axis=None
-        ) * (constraint_residual == 0)
+        ) * (constraint_residual == ConstraintResidual.AXIAL_WORLD_SPHERICAL.value)
         jac_prismatic = jnp.concatenate(
             [co_spherical_b, dot1_1_b, dot1_2_b, u_a_tangent_b], axis=None
-        ) * (constraint_residual == 1)
+        ) * (constraint_residual == ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value)
         jac_se3 = jnp.concatenate([co_spherical_b, so3_err_b], axis=None) * (
-            constraint_residual == 2
+            constraint_residual == ConstraintResidual.SE3.value
         )
         jac_twist_bend = jnp.concatenate(
             [co_spherical_b, bend1_jac_b, bend2_jac_b, twist_jac_b], axis=None
@@ -327,6 +307,10 @@ class OneBodyConstraint(Constraint):
         )
 
     def place_frame_a(self, state: State, param: SimulationParameters):
+        """
+        Returns the transform of frame a (in the world) that puts all degrees of
+        this constraint at zero, which is the world transform of frame b
+        """
         body_id = param.rigid_body_param.names.index(self.body)
         constraint_id = param.constraint_param.names.index(self.name)
 
@@ -336,9 +320,9 @@ class OneBodyConstraint(Constraint):
         body_frame_b_pos = param.constraint_param.frame_b.position[constraint_id]
         body_frame_b_rot = param.constraint_param.frame_b.rotation[constraint_id]
 
-        world_frame_b_rot = math.quat_mul(body_frame_b_rot, world_body_rot)
+        world_frame_b_rot = math.quat_mul(world_body_rot, body_frame_b_rot)
         world_frame_b_pos = world_body_pos + math.rotate_vector(
-            world_frame_b_rot, body_frame_b_pos
+            world_body_rot, body_frame_b_pos
         )
 
         world_frame_a_rot = world_frame_b_rot
