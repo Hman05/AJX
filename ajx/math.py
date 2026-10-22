@@ -211,7 +211,7 @@ def _quaternion_from_rotation_vector(primal, tangent):
     vvdot = jnp.dot(v, v_dot)
     angle2 = angle**2 + eps
     angle3 = angle**3 + eps
-    q_dot_s2 = 0.5 * vvdot / angle_safe * jnp.sin(0.5 * angle)
+    q_dot_s2 = -0.5 * vvdot / angle_safe * jnp.sin(0.5 * angle)
     q_dot_v2 = (v_dot / angle_safe - v * vvdot / angle3) * jnp.sin(
         0.5 * angle
     ) + 0.5 * v * vvdot / angle2 * jnp.cos(0.5 * angle)
@@ -258,12 +258,26 @@ def to_axis_angle(quat: jax.Array):
     return axis, angle
 
 
-@custom_jvp
 def to_rotation_vector(quat: jax.Array):
     """
-    Get a scaled axis angle representation of quaternion rotation.
+    Get the shortest rotation vector of a quaternion rotation.
+
+    Since q and -q represent the same rotation, the quaternion is first moved to
+    the hemisphere with non-negative scalar part.
+    """
+    sign = jnp.where(quat[0] < 0, -1.0, 1.0)
+    return to_rotation_vector_s3(sign * quat)
+
+
+@custom_jvp
+def to_rotation_vector_s3(quat: jax.Array):
+    """
+    Get the rotation vector of a unit quaternion without identifying q and -q.
     We write the resulting rotation vector theta as the product of an axis
-    n and angle gamma.
+    n and angle gamma, where gamma is in [0, 2 pi).
+
+    This is the logarithm on the unit quaternions (S3) rather than on rotations
+    (SO3), so q and -q give different results. 
     """
     gamma = 2 * jnp.arctan2(jnp.linalg.norm(quat[1:]), quat[0])
     sin_gamma_half = jnp.sin(gamma / 2)
@@ -272,8 +286,8 @@ def to_rotation_vector(quat: jax.Array):
     return u
 
 
-@to_rotation_vector.defjvp
-def to_rotation_vector_jvp(primal, tangent):
+@to_rotation_vector_s3.defjvp
+def to_rotation_vector_s3_jvp(primal, tangent):
     q = primal[0]
     q_s = primal[0][0]
     q_v = primal[0][1:]
