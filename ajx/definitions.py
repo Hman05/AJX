@@ -117,7 +117,9 @@ class Configuration(ParameterNode):
         rot_delta = vmap(math.quat_residual)(self.rot, other.rot)
         pos_delta = self.pos - other.pos
         scalar_delta = self.scalar - other.scalar
-        return jnp.concatenate([pos_delta, rot_delta, scalar_delta], axis=None)
+        # Same layout as retract: [pos, rot] per body, followed by the scalars
+        body_delta = jnp.concatenate([pos_delta, rot_delta], axis=-1)
+        return jnp.concatenate([body_delta.reshape(-1), scalar_delta])
 
 
 @struct.dataclass
