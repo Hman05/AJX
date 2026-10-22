@@ -69,6 +69,9 @@ def projected_gauss_seidel_dense(
 
     lbda = lbda0
     u = gvel + h * M_inv @ f_ext + M_inv_GT @ lbda
+    if nc == 0:
+        # Nothing to solve for, and the loop body cannot be traced with empty arrays
+        return u, lbda, res
 
     u, lbda, res = jax.lax.fori_loop(0, Nit, pgs_body, (u, lbda, res))
     return u, lbda, res

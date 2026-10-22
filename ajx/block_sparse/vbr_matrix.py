@@ -152,6 +152,8 @@ class VBRMatrix(BlockMatrixBase):
         """
         Computes the row groups in this matrix from matrix data
         """
+        if self.n_rows == 0:
+            return []
 
         col_sizes_per_row = np.split(
             self.col_sizes[self.col_indices], self.row_ptr[1:-1]
