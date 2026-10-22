@@ -50,6 +50,7 @@ class SimulationSettings:
     solver: Solver = Solver.DENSE_LINEAR
     pgs_iterations: int = 100
     do_jit: bool = True
+    ldlt_refinement_steps: int = 0
 
 
 class Simulation:
@@ -353,11 +354,13 @@ class Simulation:
             S_sparse, rsi_dict = self._schur_reduction(G, M_inv, Sigma_data)
             M_inv_f = M_inv.mul_vector(f_ext)
 
-            M_inv_a = gvel - self.h * M_inv_f
+            M_inv_a = gvel + self.h * M_inv_f
             rhs = b_data - G.mul_vector(M_inv_a)
             rsi_list = tuple(rsi_dict.values())
 
-            lbda = ldlt_solve(S_sparse, rsi_list, rhs)
+            lbda = ldlt_solve(
+                S_sparse, rsi_list, rhs, self.settings.ldlt_refinement_steps
+            )
             GTlbda = G.vector_mul(lbda)
 
             # To update velocity

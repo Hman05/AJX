@@ -6,7 +6,9 @@ from itertools import product
 import numpy as np
 
 
-def ldlt_solve(A: VBCMatrix, data_ptr: jax.Array, b: jax.Array) -> jax.Array:
+def ldlt_solve(
+    A: VBCMatrix, data_ptr: jax.Array, b: jax.Array, refinement_steps: int = 0
+) -> jax.Array:
     """
     Solve the linear system Ax = b using an LDLT factorization, where A is stored in a variable block row (VBC) matrix format.
 
@@ -28,6 +30,10 @@ def ldlt_solve(A: VBCMatrix, data_ptr: jax.Array, b: jax.Array) -> jax.Array:
         A list of indices to where each block starts in the contiguous data array A.data. Also known as rediction scattering indexation (rsi).
     b: jax.Array
         The right hand side vector.
+    refinement_steps: int
+        The number of iterative refinement steps. Each step solves A dx = b - Ax
+        using the same factorization, which recovers accuracy lost in the
+        factorization at the cost of one extra multiplication and substitution.
 
     Returns
     -------
@@ -35,10 +41,50 @@ def ldlt_solve(A: VBCMatrix, data_ptr: jax.Array, b: jax.Array) -> jax.Array:
         The solution x to the linear system Ax = b.
     """
     LDLT = jax.jit(ldlt_factor, static_argnums=1)(A, data_ptr)
-    y = jax.jit(forward_substitution)(LDLT, b)
-    z = jax.jit(diagonal_scaling)(LDLT, y)
-    x = jax.jit(backward_substitution)(LDLT, z)
+    x = jax.jit(ldlt_substitution)(LDLT, b)
+
+    for _ in range(refinement_steps):
+        r = b - jax.jit(symmetric_mul_vector)(A, x)
+        x = x + jax.jit(ldlt_substitution)(LDLT, r)
     return x
+
+
+def ldlt_substitution(LDLT: VBCMatrix, b: jax.Array) -> jax.Array:
+    """
+    Solve LDL^T x = b given an in-place factored matrix from ldlt_factor.
+    """
+    y = forward_substitution(LDLT, b)
+    z = diagonal_scaling(LDLT, y)
+    return backward_substitution(LDLT, z)
+
+
+def symmetric_mul_vector(A: VBCMatrix, x: jax.Array) -> jax.Array:
+    """
+    Compute A @ x for a symmetric matrix A where only the block lower triangular part is stored.
+    The diagonal blocks are assumed to be stored in full.
+    """
+    res = jnp.zeros_like(x)
+    slice_begin = 0
+    for k in range(len(A.col_ptr) - 1):
+        col_id = k
+        col_slice_begin = A.col_begin_indices[col_id]
+        col_slice_end = A.col_begin_indices[col_id + 1]
+        x_col = x[col_slice_begin:col_slice_end]
+        for i in range(A.col_ptr[k], A.col_ptr[k + 1]):
+            row_id = A.row_indices[i]
+            shape = (A.row_sizes[row_id], A.col_sizes[col_id])
+            slice_end = slice_begin + shape[0] * shape[1]
+            block = A.data[slice_begin:slice_end].reshape(shape)
+
+            row_slice_begin = A.col_begin_indices[row_id]
+            row_slice_end = A.col_begin_indices[row_id + 1]
+            res = res.at[row_slice_begin:row_slice_end].add(block @ x_col)
+            if row_id != col_id:
+                # Contribution from the (implicitly stored) upper triangular block
+                x_row = x[row_slice_begin:row_slice_end]
+                res = res.at[col_slice_begin:col_slice_end].add(block.T @ x_row)
+            slice_begin = slice_end
+    return res
 
 
 ignore_asserts = True
