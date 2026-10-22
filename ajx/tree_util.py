@@ -10,7 +10,7 @@ import numbers
 global_flag = False
 
 
-def arr_tree_replace(arr, src, name_idx_maps=()):
+def arr_tree_replace(arr, src, name_idx_maps=(), add=False):
     for key, value in src.items():
         if isinstance(key, tuple):
             assert len(key) > 0
@@ -35,25 +35,32 @@ def arr_tree_replace(arr, src, name_idx_maps=()):
         else:
             raise Exception
         if isinstance(value, (jax.Array, int, float)):
-            arr = arr.at[idx].set(value)
+            arr = arr.at[idx].add(value) if add else arr.at[idx].set(value)
         elif isinstance(value, dict):
-            new = arr_tree_replace(arr[idx], value, name_idx_maps[1:])
+            new = arr_tree_replace(arr[idx], value, name_idx_maps[1:], add)
             arr = arr.at[idx].set(new)
         else:
             raise Exception
     return arr
 
 
-def arr_tree_retract(arr, src):
-    for key, value in src.items():
-        if isinstance(value, (jax.Array, int, float)):
-            arr = arr.at[key].set(value)
-        elif isinstance(value, dict):
-            for inner_key, inner_val in value.items():
-                arr = arr.at[key, inner_key].set(arr[key, inner_key] + inner_val)
-        else:
-            raise Exception
-    return arr
+def arr_tree_retract(arr, src, name_idx_maps=()):
+    return arr_tree_replace(arr, src, name_idx_maps, add=True)
+
+
+def _split_path(src_key, src_val):
+    """Turn a dot-separated or tuple path key into its first attribute and a nested value."""
+    if isinstance(src_key, str) and "." in src_key:
+        src_key = tuple(src_key.split("."))
+    if isinstance(src_key, tuple):
+        assert len(src_key) > 0
+        assert all(isinstance(v, str) for v in src_key)
+        # Indexing with {(x, *y): v} is the same as {x: {*y: v}}
+        # We should therefore treat this case as having key x and value {*y: v}
+        # If *y constains only one string, we should use the string as the new key
+        next_key = src_key[1:] if len(src_key) > 2 else src_key[1]
+        return src_key[0], {next_key: src_val}
+    return src_key, src_val
 
 
 def tangent_jacfwd(func, argnum=0, has_aux=False):
@@ -149,21 +156,7 @@ class ParameterNode:
 
         new = self.copy()
         for src_key, src_val in src.items():
-            if isinstance(src_key, str):
-                if "." in src_key:
-                    src_key = tuple(src_key.split("."))
-            if isinstance(src_key, tuple):
-                assert len(src_key) > 0
-                assert all(isinstance(v, str) for v in src_key)
-                # Indexing with {(x, *y): v} is the same as {x: {*y: v}}
-                # We should therefore treat this case as having key x and value {*y: v}
-                # If *y constains only one string, we should use the string as the new key
-                next_key = src_key[1:] if len(src_key) > 2 else src_key[1]
-                val = {next_key: src_val}
-                key = src_key[0]
-            else:
-                key = src_key
-                val = src_val
+            key, val = _split_path(src_key, src_val)
             if key not in self.__dict__.keys():
                 raise IndexError(
                     "The provided source does not index existing attributes"
@@ -187,24 +180,23 @@ class ParameterNode:
                 if isinstance(val, (jax.Array, float)):
                     new.__dict__[key] = val
                 elif isinstance(val, dict):
-                    # Arrays are be indexed by names
-                    if not hasattr(self, "names"):
-                        raise Exception(
-                            "Indexing stacked arrays requires a 'names' attriute"
-                        )
-                    name_idx_maps = [self.names]
-                    field_data = type(self).__dataclass_fields__[key]
-                    if "second_axis_names" in field_data.metadata:
-                        second_axis_names = field_data.metadata["second_axis_names"]
-                        name_idx_maps.append(second_axis_names)
-
                     new.__dict__[key] = arr_tree_replace(
-                        self.__dict__[key], val, name_idx_maps
+                        self.__dict__[key], val, self._name_idx_maps(key)
                     )
 
                 else:
                     raise ValueError("Unsupported type")
         return new
+
+    def _name_idx_maps(self, key: str) -> Tuple[Tuple[str]]:
+        """Names for indexing the axes of a stacked array attribute by name."""
+        if not hasattr(self, "names"):
+            raise Exception("Indexing stacked arrays requires a 'names' attriute")
+        name_idx_maps = [self.names]
+        field_data = type(self).__dataclass_fields__[key]
+        if "second_axis_names" in field_data.metadata:
+            name_idx_maps.append(field_data.metadata["second_axis_names"])
+        return tuple(name_idx_maps)
 
     def _mapped_retract(self, delta: jax.Array, keys: Tuple[str]):
 
@@ -291,8 +283,10 @@ class ParameterNode:
         ----------
         delta: Dict
             Nested dictionary specifying update increments. The structure mirrors
-            the hierarchical parameter tree. For stacked component groups,
-            individual components may be addressed by their symbolic name.
+            the hierarchical parameter tree, and keys may be paths as in
+            ``tree_replace``. For stacked component groups, individual components
+            may be addressed by their symbolic name, and entries along a second
+            axis by the field's ``second_axis_names``.
         Returns:
         -------
         ParameterNode:
@@ -305,11 +299,14 @@ class ParameterNode:
             if isinstance(value, ParameterNode)
         ]
         array_attributes = [
-            key for key, value in self.__dict__.items() if isinstance(value, jax.Array)
+            key
+            for key, value in self.__dict__.items()
+            if isinstance(value, (jax.Array, float))
         ]
 
         new = self.copy()
-        for key, val in delta.items():
+        for delta_key, delta_val in delta.items():
+            key, val = _split_path(delta_key, delta_val)
             if key not in self.__dict__.keys():
                 raise IndexError(
                     "The provided source does not index existing attributes"
@@ -327,15 +324,9 @@ class ParameterNode:
                     # Default additive update
                     new.__dict__[key] = self.__dict__[key] + val
                 elif isinstance(val, dict):
-                    # Stacked arrays can be indexed by name
-                    if not hasattr(self, "names"):
-                        raise Exception(
-                            "Indexing stacked arrays requires a 'names' attriute"
-                        )
-                    name_idx_map = {k: i for i, k in enumerate(self.names)}
-                    arr_src = {name_idx_map.get(k, k): v for k, v in val.items()}
-                    new.__dict__[key] = arr_tree_retract(self.__dict__[key], arr_src)
-
+                    new.__dict__[key] = arr_tree_retract(
+                        self.__dict__[key], val, self._name_idx_maps(key)
+                    )
                 else:
                     raise ValueError("Unsupported type")
         return new
