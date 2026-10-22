@@ -12,7 +12,6 @@ from ajx.definitions import Transform
 class ConstraintResidual(Enum):
     AXIAL_WORLD_SPHERICAL = 0
     AXIAL_LOCAL_SPHERICAL = 1
-    SE3 = 2
     BEND_TWIST = 3
 
 

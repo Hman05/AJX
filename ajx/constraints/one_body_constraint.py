@@ -69,8 +69,6 @@ class OneBodyConstraint(Constraint):
             return ("nx", "ny", "nz", "n_bend", "n_torsion", "t")
         elif self.constraint_residual == ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value:
             return ("nu", "nw", "n_bend1", "n_torsion", "n_bend2", "t")
-        elif self.constraint_residual == ConstraintResidual.SE3.value:
-            return ("nu", "nv", "nw", "nru", "nrv", "nrw")
         elif self.constraint_residual == ConstraintResidual.BEND_TWIST.value:
             return ("nu", "nv", "nw", "n_bend1", "n_bend2", "n_twist")
         return ()
@@ -146,8 +144,6 @@ class OneBodyConstraint(Constraint):
         bend2 = jnp.atan2(cross1_2, dot1_2) - jnp.pi / 2
         twist = jnp.atan2(cross3_2, dot3_2) - jnp.pi / 2
 
-        so3_err = math.quat_residual(q_a, q_b)
-
         # TODO: Copy and paste code. Computations are done twice...
         frame_a_pos0 = param.constraint_param.frame_a.position[constraint_id]
         frame_a_rot0 = param.constraint_param.frame_a.rotation[constraint_id]
@@ -176,18 +172,10 @@ class OneBodyConstraint(Constraint):
         prismatic_constraint = jnp.block(
             [co_spherical, dot1_1[None], dot1_2[None], free_hinge[None]]
         ) * (constraint_residual == ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value)
-        se3_constraint = jnp.block([co_spherical, so3_err]) * (
-            constraint_residual == ConstraintResidual.SE3.value
-        )
         bend_twist_constraint = jnp.block([co_spherical, bend1, bend2, twist]) * (
             constraint_residual == ConstraintResidual.BEND_TWIST.value
         )
-        return (
-            hinge_constraint
-            + prismatic_constraint
-            + se3_constraint
-            + bend_twist_constraint
-        )
+        return hinge_constraint + prismatic_constraint + bend_twist_constraint
 
     @partial(jit, static_argnums=0)
     def jacobian(
@@ -244,31 +232,17 @@ class OneBodyConstraint(Constraint):
         bend2_jac_b = angular_jacobian(u_a, w_b)
         twist_jac_b = angular_jacobian(w_a, v_b)
 
-        def inc_quat_residual(inc_a, inc_b, q_a, q_b):
-            q_inc_a = math.from_rotation_vector(inc_a[3:])
-            q_inc_b = math.from_rotation_vector(inc_b[3:])
-            q_a_new = math.quat_mul(q_inc_a, q_a)
-            q_b_new = math.quat_mul(q_inc_b, q_b)
-            return math.quat_residual(q_a_new, q_b_new)
-
-        so3_err_b = jax.jacfwd(inc_quat_residual, argnums=1)(
-            jnp.zeros([6]), jnp.zeros([6]), q_a, q_b
-        )
-
         jac_hinge = jnp.concatenate(
             [spherical_b, dot1_1_b, dot1_2_b, u_a_tangent_b], axis=None
         ) * (constraint_residual == ConstraintResidual.AXIAL_WORLD_SPHERICAL.value)
         jac_prismatic = jnp.concatenate(
             [co_spherical_b, dot1_1_b, dot1_2_b, u_a_tangent_b], axis=None
         ) * (constraint_residual == ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value)
-        jac_se3 = jnp.concatenate([co_spherical_b, so3_err_b], axis=None) * (
-            constraint_residual == ConstraintResidual.SE3.value
-        )
         jac_twist_bend = jnp.concatenate(
             [co_spherical_b, bend1_jac_b, bend2_jac_b, twist_jac_b], axis=None
         ) * (constraint_residual == ConstraintResidual.BEND_TWIST.value)
 
-        return jac_hinge + jac_prismatic + jac_se3 + jac_twist_bend
+        return jac_hinge + jac_prismatic + jac_twist_bend
 
     def place_other(
         self,

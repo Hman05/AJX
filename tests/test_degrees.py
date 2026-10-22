@@ -24,7 +24,7 @@ AXIAL_RESIDUALS = [
     ConstraintResidual.AXIAL_WORLD_SPHERICAL,
     ConstraintResidual.AXIAL_LOCAL_SPHERICAL,
 ]
-OTHER_RESIDUALS = [ConstraintResidual.SE3, ConstraintResidual.BEND_TWIST]
+OTHER_RESIDUALS = [ConstraintResidual.BEND_TWIST]
 CONSTRAINT_TYPES = [OneBodyConstraint, TwoBodyConstraint]
 
 
