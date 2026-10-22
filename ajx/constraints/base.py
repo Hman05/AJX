@@ -7,6 +7,7 @@ import jax.numpy as jnp
 
 from dataclasses import dataclass
 from enum import Enum
+from typing import Tuple
 from ajx.definitions import Transform
 
 
@@ -103,6 +104,14 @@ DEGREES = {
         Degree("twist", ANGLE, 0, sign=-1.0),
     ),
 }
+
+
+def degree_names(constraint_residual) -> Tuple[str]:
+    """The names of the degrees of a residual type, which also name their multipliers"""
+    return tuple(
+        degree.name for degree in DEGREES[ConstraintResidual(constraint_residual)]
+    )
+
 
 # place_other can set the linear degrees, and the hinge degree of the axial residuals
 LINEAR_DEGREES = (0, 1, 2)

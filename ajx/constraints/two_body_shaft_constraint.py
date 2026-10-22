@@ -74,11 +74,7 @@ class TwoBodyShaftConstraint(Constraint):
         self.constraint_residual = parent_constraint.constraint_residual
 
     def get_multiplier_names(self) -> Tuple[str]:
-        if self.constraint_residual == ConstraintResidual.AXIAL_WORLD_SPHERICAL.value:
-            return ("nx", "ny", "nz", "n_bend", "n_torsion", "t")
-        elif self.constraint_residual == ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value:
-            return ("nu", "nw", "n_bend1", "n_torsion", "n_bend2", "t")
-        return ()
+        return ("shaft",)
 
     def compute_offset(
         default_offset: jax.Array,

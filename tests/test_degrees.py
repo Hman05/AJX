@@ -4,7 +4,12 @@ import numpy as np
 import pytest
 
 import ajx.math as math
-from ajx.constraints import ConstraintResidual, OneBodyConstraint, TwoBodyConstraint
+from ajx.constraints import (
+    ConstraintResidual,
+    OneBodyConstraint,
+    TwoBodyConstraint,
+    TwoBodyShaftConstraint,
+)
 from ajx.constraints.base import DEGREES, DegreeKind, is_wrapped_degree
 from ajx.definitions import (
     Configuration,
@@ -389,3 +394,20 @@ def test_wrapping_hinge_degrees_measure_angles_up_to_pi(residual, angle):
     np.testing.assert_allclose(
         constraint.get_degree(state, param, 5), angle, atol=1e-10
     )
+
+
+@pytest.mark.parametrize("residual", list(ConstraintResidual), ids=lambda r: r.name)
+@pytest.mark.parametrize("Constraint", CONSTRAINT_TYPES, ids=lambda c: c.__name__)
+def test_multiplier_names_are_degree_names(Constraint, residual):
+    constraint = make_constraint(Constraint, residual)
+    names = constraint.get_multiplier_names()
+    assert names == tuple(degree.name for degree in DEGREES[residual])
+    assert len(names) == Constraint.get_constrained_degrees()
+
+
+def test_shaft_constraint_names_its_single_multiplier():
+    parent = make_constraint(
+        TwoBodyConstraint, ConstraintResidual.AXIAL_WORLD_SPHERICAL
+    )
+    shaft = TwoBodyShaftConstraint("shaft", parent, "shaft_body")
+    assert len(shaft.get_multiplier_names()) == shaft.get_constrained_degrees()

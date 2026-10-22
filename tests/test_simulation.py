@@ -324,3 +324,16 @@ def test_gear_jacobian_matches_autodiff():
         GearConstraint.jacobian(param, state, (0, 1), (0,), 0),
         jax.jacfwd(residual)(state.conf.scalar)[0],
     )
+
+
+# Multiplier names
+
+
+@pytest.mark.parametrize("env_name", ENVIRONMENTS)
+def test_multiplier_names_name_each_multiplier_once(env_name):
+    env, _, _ = ENVIRONMENTS[env_name](
+        SimulationSettings(TIMESTEP, True, Solver.DENSE_LINEAR)
+    )
+    names = env.get_multiplier_names()
+    assert len(names) == env.get_multiplier_size()
+    assert len(set(names)) == len(names)

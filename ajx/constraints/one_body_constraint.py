@@ -16,6 +16,7 @@ from ajx.constraints.base import (
     ConstraintResidual,
     get_frame_transform,
     get_frame_transform_ext,
+    degree_names,
     place_body_b,
     wrapped_offset,
 )
@@ -65,13 +66,7 @@ class OneBodyConstraint(Constraint):
     #     self.constraint_residual = constraint_residual
 
     def get_multiplier_names(self) -> Tuple[str]:
-        if self.constraint_residual == ConstraintResidual.AXIAL_WORLD_SPHERICAL.value:
-            return ("nx", "ny", "nz", "n_bend", "n_torsion", "t")
-        elif self.constraint_residual == ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value:
-            return ("nu", "nw", "n_bend1", "n_torsion", "n_bend2", "t")
-        elif self.constraint_residual == ConstraintResidual.BEND_TWIST.value:
-            return ("nu", "nv", "nw", "n_bend1", "n_bend2", "n_twist")
-        return ()
+        return degree_names(self.constraint_residual)
 
     def compute_offset(
         default_offset: jax.Array,
