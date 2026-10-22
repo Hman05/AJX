@@ -6,16 +6,18 @@ import numpy as np
 import pytest
 
 import ajx.math as math
-from ajx.constraints import ConstraintResidual, GearConstraint
+from ajx.constraints import ConstraintResidual, GearConstraint, TwoBodyConstraint
 from ajx.definitions import (
     Configuration,
     ConstraintParameters,
+    Frame,
     GeneralizedVelocity,
     RigidBodyParameters,
     ScalarBody,
     ScalarBodyParameters,
     ScalarConstraintParameters,
     State,
+    Transform,
 )
 from ajx.example_environments import CartPole, FreeBody, Furuta, Pendulum
 from ajx.example_environments.dlo_attached import DLOAttached, DLOAttachedSettings
@@ -324,3 +326,54 @@ def test_gear_jacobian_matches_autodiff():
         GearConstraint.jacobian(param, state, (0, 1), (0,), 0),
         jax.jacfwd(residual)(state.conf.scalar)[0],
     )
+
+
+# Placing bodies from free degrees
+
+PlacementSparseParam = create_parameter_node("PlacementSparseParam", ())
+
+
+@pytest.mark.parametrize("x", [-0.4, 0.0, 0.7])
+def test_prismatic_place_other_matches_free_degree(x):
+    # A rotated joint frame on a rotated parent body, so that a placement along
+    # the wrong axis would be measured as a different displacement
+    frame_rot = math.quat_from_axis_angle(jnp.array([0.3, -0.5, 0.8]) / jnp.sqrt(0.98), 1.1)
+    prismatic = TwoBodyConstraint(
+        name="prismatic",
+        body_a="a",
+        body_b="b",
+        constraint_residual=ConstraintResidual.AXIAL_LOCAL_SPHERICAL.value,
+    )
+    param = SimulationParameters(
+        jnp.zeros(3),
+        RigidBodyParameters.concatenate(
+            [
+                RigidBodyParameters.create(1.0, jnp.ones(3), "a"),
+                RigidBodyParameters.create(1.0, jnp.ones(3), "b"),
+            ]
+        ),
+        ConstraintParameters.create(
+            0,
+            Frame(jnp.array([0.2, -0.1, 0.4]), frame_rot),
+            Frame(jnp.array([0.0, 0.3, -0.2]), frame_rot),
+            1e-8,
+            2 * TIMESTEP,
+            1e8,
+            "prismatic",
+        ),
+        PlacementSparseParam(),
+    )
+    body_a = Transform(
+        jnp.array([1.0, 2.0, -0.5]),
+        math.quat_from_axis_angle(jnp.array([-0.6, 0.2, 0.4]) / jnp.sqrt(0.56), 0.9),
+    )
+    body_b = prismatic.place_other(0, param, body_a, x)
+    state = State(
+        Configuration(
+            jnp.stack([body_a.pos, body_b.pos]),
+            jnp.stack([body_a.rot, body_b.rot]),
+            jnp.zeros(0),
+        ),
+        GeneralizedVelocity(jnp.zeros((2, 6)), jnp.zeros(0)),
+    )
+    np.testing.assert_allclose(prismatic.get_free_degrees(state, param), x, atol=1e-12)
