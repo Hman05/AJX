@@ -5,6 +5,7 @@ import jax
 from jax import jit
 import jax.numpy as jnp
 
+from dataclasses import dataclass
 from enum import Enum
 from ajx.definitions import Transform
 
@@ -41,11 +42,69 @@ def get_frame_transform_ext(frame, constraint_id, body_pos, body_rotation):
     return d, u, v, w, frame_rot
 
 
-# The degrees of a constraint are the rows of its residual. place_other can set the
-# linear degrees, which are the offset r_a - r_b from the origin of frame b to the
-# origin of frame a, in world coordinates for AXIAL_WORLD_SPHERICAL and in frame a
-# coordinates for the other residuals. It can also set the hinge degree of the
-# axial residuals, which is the angle of frame b about the x-axis of frame a.
+class DegreeKind(Enum):
+    LINEAR = "linear"  # A length, in metres
+    ANGLE = "angle"  # An angle, in radians
+    DOT = "dot"  # A dot product of unit axes, without unit
+
+
+@dataclass(frozen=True)
+class Degree:
+    """
+    A degree of a constraint residual, that is, one of its rows.
+
+    A linear degree is the component of r_a - r_b, from the origin of frame b to the
+    origin of frame a, along axis (0, 1, 2) of the world for AXIAL_WORLD_SPHERICAL
+    and of frame a for the other residuals. A rotational degree measures a rotation
+    of frame b by an angle phi about axis (0, 1, 2 for u, v, w) of frame a: an angle
+    degree is then sign * phi and a dot degree is sign * sin(phi). Angle degrees
+    that do not wrap around at +-pi are only valid for |phi| < pi / 2.
+    """
+
+    name: str
+    kind: DegreeKind
+    axis: int
+    sign: float = 1.0
+    wraps: bool = False
+
+
+LINEAR, ANGLE, DOT = DegreeKind.LINEAR, DegreeKind.ANGLE, DegreeKind.DOT
+
+# The degrees of each residual type.
+#
+# The target of a degree (ConstraintParameters.target) is in the units of the
+# degree. For a locked degree, it is the value that the degree is held at: the
+# constraint drives the offset degree - target to zero, wrapped to [-pi, pi) for
+# degrees that wrap. For a velocity degree, it is the rate of change of the degree
+# that the constraint drives towards.
+DEGREES = {
+    ConstraintResidual.AXIAL_WORLD_SPHERICAL: (
+        Degree("x", LINEAR, 0),
+        Degree("y", LINEAR, 1),
+        Degree("z", LINEAR, 2),
+        Degree("u_a.v_b", DOT, 2, sign=-1.0),
+        Degree("u_a.w_b", DOT, 1),
+        Degree("hinge", ANGLE, 0, wraps=True),
+    ),
+    ConstraintResidual.AXIAL_LOCAL_SPHERICAL: (
+        Degree("u", LINEAR, 0),
+        Degree("v", LINEAR, 1),
+        Degree("w", LINEAR, 2),
+        Degree("u_a.v_b", DOT, 2, sign=-1.0),
+        Degree("u_a.w_b", DOT, 1),
+        Degree("hinge", ANGLE, 0, wraps=True),
+    ),
+    ConstraintResidual.BEND_TWIST: (
+        Degree("u", LINEAR, 0),
+        Degree("v", LINEAR, 1),
+        Degree("w", LINEAR, 2),
+        Degree("bend_w", ANGLE, 2),
+        Degree("bend_v", ANGLE, 1, sign=-1.0),
+        Degree("twist", ANGLE, 0, sign=-1.0),
+    ),
+}
+
+# place_other can set the linear degrees, and the hinge degree of the axial residuals
 LINEAR_DEGREES = (0, 1, 2)
 HINGE_DEGREE = 5
 AXIAL_RESIDUALS = (
@@ -55,24 +114,19 @@ AXIAL_RESIDUALS = (
 
 
 def is_wrapped_degree(constraint_residual, degree: int) -> bool:
-    """
-    Whether a degree is an angle that wraps around at +-pi, which is the hinge
-    degree of the axial residuals
-    """
-    return (
-        ConstraintResidual(constraint_residual) in AXIAL_RESIDUALS
-        and degree == HINGE_DEGREE
-    )
+    """Whether a degree is an angle that wraps around at +-pi"""
+    return DEGREES[ConstraintResidual(constraint_residual)][degree].wraps
 
 
 def wrapped_degrees(constraint_residual) -> jax.Array:
     """
-    Mask of the degrees that wrap around at +-pi (see is_wrapped_degree). The
-    residual type may be traced.
+    Mask of the degrees that wrap around at +-pi. The residual type may be traced.
     """
-    axial_values = jnp.array([residual.value for residual in AXIAL_RESIDUALS])
-    is_axial = jnp.any(axial_values == constraint_residual)
-    return jnp.zeros(6, dtype=bool).at[HINGE_DEGREE].set(is_axial)
+    mask = jnp.zeros(6, dtype=bool)
+    for residual, degrees in DEGREES.items():
+        residual_mask = jnp.array([degree.wraps for degree in degrees])
+        mask = mask | (residual_mask & (constraint_residual == residual.value))
+    return mask
 
 
 def wrapped_offset(default_offset, target, constraint_residual) -> jax.Array:

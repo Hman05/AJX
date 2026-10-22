@@ -633,7 +633,8 @@ class Simulation:
             not_locked = constraint_param.is_velocity[idx_slice]
             is_locked = jnp.logical_not(not_locked)
 
-            # Problem: What if Lie group / Manifold? Comparing Lie algebra objects?
+            # The offsets of the locked degrees from their targets, which are in the
+            # units of each degree (see ajx.constraints.base.DEGREES)
             offsets = jax.vmap(Constraint.compute_offset)(
                 default_offsets, target, constraint_residuals
             )

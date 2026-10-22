@@ -5,7 +5,7 @@ import pytest
 
 import ajx.math as math
 from ajx.constraints import ConstraintResidual, OneBodyConstraint, TwoBodyConstraint
-from ajx.constraints.base import is_wrapped_degree
+from ajx.constraints.base import DEGREES, DegreeKind, is_wrapped_degree
 from ajx.definitions import (
     Configuration,
     ConstraintParameters,
@@ -298,3 +298,94 @@ def test_compute_offset_wraps_only_hinge_degrees(Constraint, residual):
         for degree in range(6)
     ]
     np.testing.assert_allclose(offset, expected, atol=1e-12)
+
+
+# The degree table describes the residuals
+
+
+def place_frame_b(constraint, param, body_a, frame_b_rel):
+    """State with frame b at the transform frame_b_rel relative to frame a"""
+    cp = param.constraint_param
+    if isinstance(constraint, OneBodyConstraint):
+        body_a = Transform.identity()
+    frame_a = body_a.multiply(Transform(cp.frame_a.position[0], cp.frame_a.rotation[0]))
+    frame_b = frame_a.multiply(frame_b_rel)
+    frame_b0 = Transform(cp.frame_b.position[0], cp.frame_b.rotation[0])
+    return make_state(body_a, frame_b.multiply(frame_b0.inverse()))
+
+
+@pytest.mark.parametrize("residual", list(ConstraintResidual), ids=lambda r: r.name)
+@pytest.mark.parametrize("Constraint", CONSTRAINT_TYPES, ids=lambda c: c.__name__)
+def test_linear_degrees_are_components_of_frame_offset(Constraint, residual):
+    rng = np.random.default_rng(6)
+    param = make_param(rng)
+    constraint = make_constraint(Constraint, residual)
+    # A frame b with offset and rotation relative to frame a
+    state = place_frame_b(
+        constraint,
+        param,
+        random_transform(rng),
+        Transform(
+            jnp.array(rng.normal(size=3)),
+            math.from_rotation_vector(jnp.array(rng.normal(size=3)) * 0.3),
+        ),
+    )
+    cp = param.constraint_param
+    body_a = Transform(state.conf.pos[0], state.conf.rot[0])
+    if Constraint is OneBodyConstraint:
+        body_a = Transform.identity()
+    body_b = Transform(state.conf.pos[1], state.conf.rot[1])
+    frame_a = body_a.multiply(Transform(cp.frame_a.position[0], cp.frame_a.rotation[0]))
+    frame_b = body_b.multiply(Transform(cp.frame_b.position[0], cp.frame_b.rotation[0]))
+    offset = frame_a.pos - frame_b.pos
+    if residual != ConstraintResidual.AXIAL_WORLD_SPHERICAL:
+        offset = math.rotate_vector(math.conjugate(frame_a.rot), offset)
+
+    values = constraint.object_func(state, param)
+    for i, degree in enumerate(DEGREES[residual]):
+        if degree.kind == DegreeKind.LINEAR:
+            np.testing.assert_allclose(values[i], offset[degree.axis], atol=1e-10)
+
+
+@pytest.mark.parametrize("angle", [-1.2, -0.4, 0.4, 1.2])
+@pytest.mark.parametrize("residual", list(ConstraintResidual), ids=lambda r: r.name)
+@pytest.mark.parametrize("Constraint", CONSTRAINT_TYPES, ids=lambda c: c.__name__)
+def test_rotational_degrees_measure_rotations_about_their_axes(
+    Constraint, residual, angle
+):
+    rng = np.random.default_rng(7)
+    param = make_param(rng)
+    constraint = make_constraint(Constraint, residual)
+    body_a = random_transform(rng)
+    for i, degree in enumerate(DEGREES[residual]):
+        if degree.kind == DegreeKind.LINEAR:
+            continue
+        rotation = math.from_rotation_vector(jnp.zeros(3).at[degree.axis].set(angle))
+        state = place_frame_b(
+            constraint, param, body_a, Transform(jnp.zeros(3), rotation)
+        )
+        value = degree.sign * (
+            angle if degree.kind == DegreeKind.ANGLE else jnp.sin(angle)
+        )
+        # A rotation about the axis of one degree leaves all other degrees at zero
+        np.testing.assert_allclose(
+            constraint.object_func(state, param),
+            jnp.zeros(6).at[i].set(value),
+            atol=1e-10,
+        )
+
+
+@pytest.mark.parametrize("angle", [-3.0, -2.0, 2.0, 3.0])
+@pytest.mark.parametrize("residual", AXIAL_RESIDUALS, ids=lambda r: r.name)
+def test_wrapping_hinge_degrees_measure_angles_up_to_pi(residual, angle):
+    rng = np.random.default_rng(8)
+    param = make_param(rng)
+    constraint = make_constraint(TwoBodyConstraint, residual)
+    rotation = math.from_rotation_vector(jnp.array([angle, 0.0, 0.0]))
+    state = place_frame_b(
+        constraint, param, random_transform(rng), Transform(jnp.zeros(3), rotation)
+    )
+    assert DEGREES[residual][5].wraps
+    np.testing.assert_allclose(
+        constraint.get_degree(state, param, 5), angle, atol=1e-10
+    )

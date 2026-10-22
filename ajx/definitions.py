@@ -213,7 +213,9 @@ class ConstraintParameters(ParameterNode):
     compliance: jax.Array
     viscous_compliance: jax.Array
     damping: jax.Array  # Ignored for velocity constrained dofs
-    target: jax.Array  # Target velocity for velocity constrained dofs
+    # The value of locked dofs, or the rate of velocity constrained dofs, in the
+    # units of each dof (see ajx.constraints.base.DEGREES)
+    target: jax.Array
     is_velocity: jax.Array  # Bools set to true for velocity constrained dofs
 
     @classmethod
