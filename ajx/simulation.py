@@ -524,9 +524,10 @@ class Simulation:
         assert set([c.name for c in self.rigid_body_list]).issubset(
             set(param.rigid_body_param.names)
         )
-        assert set([c.name for c in self.constraint_list]).issubset(
-            set(param.constraint_param.names)
-        )
+        for constraint in self.constraint_list:
+            parameter_group_names = type(constraint).get_parameter_group_names()
+            for path, name in zip(parameter_group_names, constraint.names):
+                assert name in param.get_value_at_path(path).names
 
         G_rsi_list = list(G_rsi.values())
         G_row_indices = np.cumsum(G_row_sizes) - G_row_sizes
@@ -662,11 +663,11 @@ class Simulation:
 
                 offset = 0
                 results = []
-                for dim, gvel_name in zip(dims, gvel_names):
+                for operand, (dim, gvel_name) in enumerate(zip(dims, gvel_names)):
                     G = G_blocks[offset * cd : (offset + dim) * cd].reshape(cd, dim)
                     offset += dim
 
-                    body_id = body_ids[i]
+                    body_id = body_ids[operand]
                     body_gvel = gvel.get_value_at_path(gvel_name)[body_id].flatten()
 
                     results.append(G @ body_gvel)

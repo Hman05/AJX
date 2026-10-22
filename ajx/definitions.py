@@ -341,7 +341,8 @@ class ScalarConstraintParameters(ParameterNode):
     offset_a: jax.Array
     offset_b: jax.Array
     gear_ratio: jax.Array
-    compliance: jax.Array  # Viscous compliance for velocity constrained dofs
+    compliance: jax.Array
+    viscous_compliance: jax.Array  # Used for velocity constrained dofs
     damping: jax.Array  # Ignored for velocity constrained dofs
     target: jax.Array  # Target velocity for velocity constrained dofs
     is_velocity: jax.Array  # Bools set to true for velocity constrained dofs
@@ -365,6 +366,7 @@ class ScalarConstraintParameters(ParameterNode):
             offset_b=jnp.array(offset_b)[None],
             gear_ratio=jnp.array(gear_ratio)[None],
             compliance=jnp.array([compliance])[None],
+            viscous_compliance=jnp.array([compliance])[None],
             damping=jnp.array([damping])[None],
             target=jnp.zeros(1)[None],
             is_velocity=is_velocity,
@@ -378,6 +380,7 @@ class ScalarConstraintParameters(ParameterNode):
             offset_b=jnp.array([0]),
             gear_ratio=jnp.array([0]),
             compliance=jnp.array([0]),
+            viscous_compliance=jnp.array([0]),
             damping=jnp.array([0]),
             target=jnp.array([0]),
             is_velocity=jnp.array([0]),
@@ -402,7 +405,7 @@ class RigidBodyParameters(ParameterNode):
     def create_empty(cls):
         return cls(
             names=(),
-            mass=jnp.zeros([0, 1]),
+            mass=jnp.zeros([0]),
             mc=jnp.zeros([0, 3]),
             inertia=jnp.zeros([0, 6]),
         )

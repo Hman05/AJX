@@ -21,10 +21,13 @@ import pytest
 
 agx = pytest.importorskip("agx")
 agxSDK = pytest.importorskip("agxSDK")
+agxDriveTrain = pytest.importorskip("agxDriveTrain")
+agxPowerLine = pytest.importorskip("agxPowerLine")
 
 import ajx.math as math
 from ajx.constraints import (
     ConstraintResidual,
+    GearConstraint,
     OneBodyConstraint,
     TwoBodyConstraint,
 )
@@ -35,6 +38,9 @@ from ajx.definitions import (
     GeneralizedVelocity,
     RigidBody,
     RigidBodyParameters,
+    ScalarBody,
+    ScalarBodyParameters,
+    ScalarConstraintParameters,
     State,
 )
 from ajx.example_environments import FreeBody
@@ -232,24 +238,19 @@ def max_chain_position_difference(
 
 
 @pytest.mark.parametrize("viscous_damping", [None, 0.01], ids=["free", "damped"])
-def test_pendulum_matches_agx(viscous_damping):
-    difference = max_chain_position_difference(1, 0.01, viscous_damping=viscous_damping)
-    assert difference < 5e-4
+@pytest.mark.parametrize("n_links", [1, 2], ids=["pendulum", "double_pendulum"])
+def test_pendulum_chain_matches_agx(n_links, viscous_damping):
+    difference = max_chain_position_difference(
+        n_links, 0.01, viscous_damping=viscous_damping
+    )
+    assert difference < 1e-3
 
 
-def test_pendulum_difference_to_agx_is_second_order():
-    coarse = max_chain_position_difference(1, 0.01)
-    fine = max_chain_position_difference(1, 0.005)
+@pytest.mark.parametrize("n_links", [1, 2], ids=["pendulum", "double_pendulum"])
+def test_pendulum_chain_difference_to_agx_is_second_order(n_links):
+    coarse = max_chain_position_difference(n_links, 0.01)
+    fine = max_chain_position_difference(n_links, 0.005)
     assert coarse / fine > 3.0
-
-
-def test_double_pendulum_converges_to_agx():
-    # The two first-order discretisations differ at O(h), and the double pendulum
-    # amplifies the difference over time, so only check that it vanishes with h
-    coarse = max_chain_position_difference(2, 0.01)
-    fine = max_chain_position_difference(2, 0.005)
-    assert fine < 2e-2
-    assert 1.7 < coarse / fine < 2.3
 
 
 def test_hanging_pendulum_deflection_matches_agx():
@@ -294,3 +295,99 @@ def test_free_flight_matches_agx():
 
     np.testing.assert_allclose(state.conf.pos[0], agx_position(body), atol=1e-12)
     np.testing.assert_allclose(state.conf.rot[0], agx_rotation(body), atol=1e-12)
+
+
+# Gear between two shafts built in both simulators
+
+
+def run_gear(compliance, damping, gear_ratio, inertia_a, inertia_b, ang_a0, steps):
+    """
+    Two shafts coupled by a holonomic gear, with shaft a initially spinning.
+    Returns the shaft angles after each step from AJX and AGX.
+
+    AJX measures the gear violation as q_a - r q_b (input shaft angle), while
+    AGX measures it as q_a / r - q_b (output shaft angle). The AGX compliance is
+    therefore scaled by 1 / r^2 to describe the same gear.
+    """
+    timestep = 0.01
+
+    ajx_sim = Simulation(
+        SimulationSettings(timestep),
+        (),
+        (GearConstraint("gear", "shaft_a", "shaft_b"),),
+        scalar_body_list=(ScalarBody("shaft_a"), ScalarBody("shaft_b")),
+    )
+    ajx_param = SimulationParameters(
+        jnp.zeros(3),
+        RigidBodyParameters.create_empty(),
+        ConstraintParameters.create_empty(),
+        AGXReferenceSparseParam(),
+        scalar_body_param=ScalarBodyParameters.concatenate(
+            [
+                ScalarBodyParameters.create(inertia_a, True, "shaft_a"),
+                ScalarBodyParameters.create(inertia_b, True, "shaft_b"),
+            ]
+        ),
+        scalar_constraint_param=ScalarConstraintParameters.create(
+            0.0, 0.0, gear_ratio, True, compliance, damping, "gear"
+        ),
+    )
+    ajx_state = State(
+        Configuration(jnp.zeros((0, 3)), jnp.zeros((0, 4)), jnp.zeros(2)),
+        GeneralizedVelocity(jnp.zeros((0, 6)), jnp.array([ang_a0, 0.0])),
+        multipliers=jnp.zeros(1),
+        residual=jnp.zeros(1),
+    )
+
+    agx_sim = agx_simulation(timestep, gravity=jnp.zeros(3))
+    power_line = agxPowerLine.PowerLine()
+    agx_sim.add(power_line)
+    shaft_a = agxDriveTrain.Shaft()
+    shaft_a.setInertia(inertia_a)
+    shaft_b = agxDriveTrain.Shaft()
+    shaft_b.setInertia(inertia_b)
+    gear = agxDriveTrain.HolonomicGear()
+    gear.setGearRatio(gear_ratio)
+    gear.setViscousCompliance(compliance / gear_ratio**2)
+    gear.setViscousDamping(damping)
+    power_line.add(shaft_a)
+    shaft_a.connect(gear)
+    gear.connect(shaft_b)
+    shaft_a.getRotationalDimension().setAngularVelocity(ang_a0)
+
+    ajx_angles, agx_angles = [], []
+    for _ in range(steps):
+        ajx_state = ajx_step(ajx_sim, ajx_state, ajx_param)
+        agx_sim.stepForward()
+        ajx_angles.append(np.array(ajx_state.conf.scalar))
+        agx_angles.append([shaft_a.getAngle(), shaft_b.getAngle()])
+    return np.array(ajx_angles), np.array(agx_angles)
+
+
+@pytest.mark.parametrize("compliance", [1e-8, 1e-2], ids=["stiff", "compliant"])
+def test_gear_matches_agx(compliance):
+    ajx_angles, agx_angles = run_gear(
+        compliance,
+        damping=0.02,
+        gear_ratio=2.0,
+        inertia_a=1.0,
+        inertia_b=2.0,
+        ang_a0=1.0,
+        steps=100,
+    )
+    np.testing.assert_allclose(ajx_angles, agx_angles, atol=1e-10)
+
+
+def test_stiff_gear_shares_momentum_like_agx():
+    # The gear impulse lambda acts as +lambda on shaft a and -r lambda on shaft b,
+    # so I_a w_a + I_b w_b / r is conserved, and w_a = r w_b once engaged.
+    # SPOOK damping removes the initial velocity mismatch over a few steps.
+    gear_ratio, inertia_a, inertia_b = 2.0, 1.0, 2.0
+    ajx_angles, agx_angles = run_gear(
+        1e-8, 0.02, gear_ratio, inertia_a, inertia_b, ang_a0=1.0, steps=100
+    )
+    ang_b = inertia_a / (inertia_a * gear_ratio + inertia_b / gear_ratio)
+    expected = np.array([gear_ratio * ang_b, ang_b])
+    for angles in (ajx_angles, agx_angles):
+        final_ang = (angles[-1] - angles[-2]) / 0.01
+        np.testing.assert_allclose(final_ang, expected, atol=1e-6)

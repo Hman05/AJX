@@ -6,15 +6,25 @@ import numpy as np
 import pytest
 
 import ajx.math as math
-from ajx.constraints import ConstraintResidual
-from ajx.definitions import Configuration, GeneralizedVelocity, State
+from ajx.constraints import ConstraintResidual, GearConstraint
+from ajx.definitions import (
+    Configuration,
+    ConstraintParameters,
+    GeneralizedVelocity,
+    RigidBodyParameters,
+    ScalarBody,
+    ScalarBodyParameters,
+    ScalarConstraintParameters,
+    State,
+)
 from ajx.example_environments import CartPole, FreeBody, Furuta, Pendulum
 from ajx.example_environments.dlo_attached import DLOAttached, DLOAttachedSettings
 from ajx.example_environments.double_pendulum import (
     DoublePendulum,
     DoublePendulumSettings,
 )
-from ajx.simulation import SimulationSettings, Solver
+from ajx.param import SimulationParameters, create_parameter_node
+from ajx.simulation import Simulation, SimulationSettings, Solver
 
 TIMESTEP = 0.01
 AGREEMENT_STEPS = 20
@@ -236,3 +246,81 @@ def test_swinging_pendulum_keeps_pivot_and_does_not_gain_energy():
     # fluctuate slightly from step to step
     assert max(energies) < energy0 + 1e-4
     assert energies[-1] < energy0
+
+
+# Gear between two scalar bodies
+
+GearSparseParam = create_parameter_node("GearSparseParam", ())
+
+
+def make_gear_system(solver, gear_ratio, inertia_a, inertia_b, ang0):
+    simulation = Simulation(
+        SimulationSettings(TIMESTEP, solver=solver),
+        (),
+        (GearConstraint("gear", "shaft_a", "shaft_b"),),
+        scalar_body_list=(ScalarBody("shaft_a"), ScalarBody("shaft_b")),
+    )
+    param = SimulationParameters(
+        jnp.zeros(3),
+        RigidBodyParameters.create_empty(),
+        ConstraintParameters.create_empty(),
+        GearSparseParam(),
+        scalar_body_param=ScalarBodyParameters.concatenate(
+            [
+                ScalarBodyParameters.create(inertia_a, True, "shaft_a"),
+                ScalarBodyParameters.create(inertia_b, True, "shaft_b"),
+            ]
+        ),
+        scalar_constraint_param=ScalarConstraintParameters.create(
+            0.0, 0.0, gear_ratio, True, 1e-8, 2 * TIMESTEP, "gear"
+        ),
+    )
+    state = State(
+        Configuration(jnp.zeros((0, 3)), jnp.zeros((0, 4)), jnp.zeros(2)),
+        GeneralizedVelocity(jnp.zeros((0, 6)), ang0),
+        multipliers=jnp.zeros(1),
+        residual=jnp.zeros(1),
+    )
+    return simulation, param, state
+
+
+@pytest.mark.parametrize(
+    "solver",
+    [Solver.DENSE_LINEAR, Solver.SPARSE_LINEAR, Solver.DENSE_PGS, Solver.SPARSE_PGS],
+    ids=lambda s: s.name.lower(),
+)
+def test_gear_couples_shafts_and_conserves_momentum(solver):
+    gear_ratio, inertia_a, inertia_b = 2.0, 1.0, 2.0
+    ang0 = jnp.array([1.0, -0.5])
+    simulation, param, state = make_gear_system(
+        solver, gear_ratio, inertia_a, inertia_b, ang0
+    )
+    for _ in range(100):
+        state, ((gvel_next, multipliers, residual), _) = simulation.pre_step(
+            state, jnp.zeros(0), param
+        )
+        state = simulation.post_step(state, gvel_next, multipliers, residual)
+
+    # The gear impulse acts as +lambda on shaft a and -r lambda on shaft b, so
+    # I_a w_a + I_b w_b / r is conserved, and w_a = r w_b once engaged
+    momentum = inertia_a * ang0[0] + inertia_b * ang0[1] / gear_ratio
+    ang_b = momentum / (inertia_a * gear_ratio + inertia_b / gear_ratio)
+    np.testing.assert_allclose(
+        state.gvel.scalar, [gear_ratio * ang_b, ang_b], atol=1e-6
+    )
+
+
+def test_gear_jacobian_matches_autodiff():
+    simulation, param, state = make_gear_system(
+        Solver.DENSE_LINEAR, 2.0, 1.0, 2.0, jnp.zeros(2)
+    )
+    state = state.replace(conf=state.conf.replace(scalar=jnp.array([0.3, -0.2])))
+
+    def residual(scalar):
+        conf = state.conf.replace(scalar=scalar)
+        return GearConstraint.func(param, state.replace(conf=conf), (0, 1), (0,), 0)
+
+    np.testing.assert_allclose(
+        GearConstraint.jacobian(param, state, (0, 1), (0,), 0),
+        jax.jacfwd(residual)(state.conf.scalar)[0],
+    )
