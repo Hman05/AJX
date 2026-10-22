@@ -81,8 +81,9 @@ class Furuta(Environment):
         rotation3 = rotation2
 
         electric_motor_param = GainMotorParameters(0.0004, 7.5)  # 0.00265, 0.0039
+        # A positive voltage turns arm1 in the negative direction of the hinge angle
         electric_motor = GainMotor(
-            "electric_motor", self.hinge1, sim_settings.timestep, 0, 5
+            "electric_motor", self.hinge1, sim_settings.timestep, 0, 5, sign=-1.0
         )
         # self.electric_motor = TargetSpeedMotor("electric_motor", "hinge1_motor", 0)
 
@@ -125,8 +126,8 @@ class Furuta(Environment):
 
         pre_step_modifiers = (electric_motor,)
 
-        rotary_decoder1 = RotaryEncoder("rotary_encoder1", self.hinge1)
-        rotary_decoder2 = RotaryEncoder("rotary_encoder2", self.hinge2)
+        rotary_decoder1 = DegreeEncoder("rotary_encoder1", self.hinge1, 5)
+        rotary_decoder2 = DegreeEncoder("rotary_encoder2", self.hinge2, 5)
 
         sensors = (rotary_decoder1, rotary_decoder2)
 
@@ -178,14 +179,10 @@ class Furuta(Environment):
         ]
 
     def observation_to_configuration(self, observation, param):
-        world_transform = Transform(
-            jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
-        )
-
         theta1 = observation[0]
         theta2 = observation[1]
-        arm1_transform = self.hinge1.place_other(param, world_transform, theta1)
-        arm2_transform = self.hinge2.place_other(5, param, arm1_transform, theta2)
+        arm1_transform = self.hinge1.place_other(param, 5, theta1)
+        arm2_transform = self.hinge2.place_other(param, arm1_transform, 5, theta2)
         return Configuration.concatenate(
             [arm1_transform.to_configuration(), arm2_transform.to_configuration()]
         )

@@ -27,13 +27,24 @@ class GainMotorParameters(ParameterNode):
 
 class GainMotor(PreStepModifier):
     def __init__(
-        self, name: str, constraint, timestep: float, idx: int, target_dof: int
+        self,
+        name: str,
+        constraint,
+        timestep: float,
+        idx: int,
+        target_dof: int,
+        sign: float = 1.0,
     ):
+        """
+        A motor driving degree target_dof of the constraint with command u[idx].
+        With sign -1, a positive command drives the degree in its negative direction.
+        """
         self.name = name
         self.constraint = constraint
         self.timestep = timestep
         self.idx = idx
         self.target_dof = target_dof
+        self.sign = sign
 
     def update_params(self, state, u, param):
         body_ids = tuple(
@@ -60,6 +71,7 @@ class GainMotor(PreStepModifier):
             - self.timestep**2
             / sparse_dict_param[self.name].inertia
             * sparse_dict_param[self.name].gain
+            * self.sign
             * u[self.idx]
         )
         return state, param.tree_replace(

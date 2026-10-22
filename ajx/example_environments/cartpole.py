@@ -111,8 +111,8 @@ class CartPole(Environment):
 
         self.pre_step_modifiers = (motor,)
 
-        self.distance_sensor = LinearEncoder("linear_encoder", self.prismatic)
-        self.rotary_encoder = RotaryEncoder("rotary_encoder", self.hinge)
+        self.distance_sensor = DegreeEncoder("linear_encoder", self.prismatic, 0)
+        self.rotary_encoder = DegreeEncoder("rotary_encoder", self.hinge, 5)
 
         self.sensors = (
             self.distance_sensor,
@@ -155,14 +155,10 @@ class CartPole(Environment):
         self.extra_geometry = (("rail", Transform.identity()),)
 
     def observation_to_configuration(self, observation, param):
-        world_transform = Transform(
-            jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
-        )
-
         x = observation[0]
         theta = observation[1]
-        cart_transform = self.prismatic.place_other(param, world_transform, x)
-        pendulum_transform = self.hinge.place_other(5, param, cart_transform, theta)
+        cart_transform = self.prismatic.place_other(param, 0, x)
+        pendulum_transform = self.hinge.place_other(param, cart_transform, 5, theta)
         return Configuration.concatenate(
             [cart_transform.to_configuration(), pendulum_transform.to_configuration()]
         )

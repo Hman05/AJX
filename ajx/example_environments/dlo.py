@@ -186,6 +186,9 @@ class LockAtZeroSpeedMotor(PreStepModifier):
     lock_degrees: List[int]
     u_idx: int
     lock_idx: int
+    # The sign of the command of each degree. With sign -1, a positive command
+    # drives the degree in its negative direction
+    signs: Optional[jax.Array] = None
 
     def update_params(self, state: DLOState, u: jax.Array, param: SimulationParameters):
         num_lock_deg = len(self.lock_degrees)
@@ -193,9 +196,12 @@ class LockAtZeroSpeedMotor(PreStepModifier):
         not_lock = jnp.logical_not(lock)
 
         current_offset = self.constraint.object_func(state, param)[self.lock_degrees]
+        commands = u[self.u_idx : self.u_idx + num_lock_deg]
+        if self.signs is not None:
+            commands = self.signs * commands
         target = (
             state.lock_targets[self.lock_idx : self.lock_idx + num_lock_deg] * lock
-            + u[self.u_idx : self.u_idx + num_lock_deg] * not_lock
+            + commands * not_lock
         )
         new_lock_target = (
             state.lock_targets[self.lock_idx : self.lock_idx + num_lock_deg] * lock
@@ -718,8 +724,16 @@ class DLO(Environment):
 
         pos_yaw_degrees = jnp.array([0, 1, 2, 5])
         hinge_degree = jnp.array([5])
+        # A positive yaw command turns the gripper in the negative direction of the
+        # hinge angle of the one-body lock
+        pos_yaw_signs = jnp.array([1.0, 1.0, 1.0, -1.0])
         target_speed_motor1 = LockAtZeroSpeedMotor(
-            "motor1_pos_yaw", self.lock_world_to_hidden1a, pos_yaw_degrees, 0, 0
+            "motor1_pos_yaw",
+            self.lock_world_to_hidden1a,
+            pos_yaw_degrees,
+            0,
+            0,
+            pos_yaw_signs,
         )
         target_speed_motor2 = LockAtZeroSpeedMotor(
             "motor1_pitch", self.lock_hidden1a_to_hidden2a, hinge_degree, 4, 4
@@ -729,7 +743,12 @@ class DLO(Environment):
         )
 
         target_speed_motor4 = LockAtZeroSpeedMotor(
-            "motor2_pos_yaw", self.lock_hidden1b_to_world, pos_yaw_degrees, 6, 6
+            "motor2_pos_yaw",
+            self.lock_hidden1b_to_world,
+            pos_yaw_degrees,
+            6,
+            6,
+            pos_yaw_signs,
         )
         target_speed_motor5 = LockAtZeroSpeedMotor(
             "motor2_pitch", self.lock_hidden2b_to_hidden1b, hinge_degree, 10, 10
@@ -811,28 +830,30 @@ class DLO(Environment):
         )
 
         body_transforms = []
+        # The linear degrees of the one-body lock are the offset from hidden_link1a
+        # to the world origin
         body_transforms.append(
-            self.lock_world_to_hidden1a.place_other(param, world_transform, 0)
+            self.lock_world_to_hidden1a.place_other(
+                param, (0, 1, 2), -world_transform.pos
+            )
         )
         body_transforms.append(
-            self.lock_hidden1a_to_hidden2a.place_other(0, param, world_transform, 0)
+            self.lock_hidden1a_to_hidden2a.place_other(param, world_transform)
         )
         body_transforms.append(
-            self.lock_hidden2a_to_gripper1.place_other(0, param, body_transforms[-1], 0)
+            self.lock_hidden2a_to_gripper1.place_other(param, body_transforms[-1])
         )
         for i in range(self.env_settings.n_segments):
-            new_transform = self.lock_joints[i].place_other(
-                0, param, body_transforms[-1], 0
-            )
+            new_transform = self.lock_joints[i].place_other(param, body_transforms[-1])
             body_transforms.append(new_transform)
         gripper2_transform = self.lock_joints[-1].place_other(
-            0, param, body_transforms[-1], 0
+            param, body_transforms[-1]
         )
         hidden2b_transform = self.lock_gripper2_to_hidden_link2b.place_other(
-            0, param, gripper2_transform, 0
+            param, gripper2_transform
         )
         hidden1b_transform = self.lock_hidden2b_to_hidden1b.place_other(
-            0, param, hidden2b_transform, 0
+            param, hidden2b_transform
         )
 
         body_transforms.append(gripper2_transform)
@@ -1066,7 +1087,6 @@ class DLO(Environment):
         lock_euler1 = math.quat_to_euler(math.conjugate(gripper1_transform.rot))
         # lock_euler1 = lock_euler1.at[2].set(-lock_euler1[2])
         lock1_yaw, lock1_pitch, lock1_roll = lock_euler1
-        lock_euler1 = lock_euler1.at[0].set(-lock1_yaw)
         lock_euler1 = lock_euler1.at[1].set(lock1_pitch)
         lock_euler1 = lock_euler1.at[2].set(-lock1_roll)
 
@@ -1074,20 +1094,19 @@ class DLO(Environment):
         lock_euler2 = math.quat_to_euler(math.conjugate(gripper2_transform.rot))
         # lock_euler2 = lock_euler2.at[2].set(-lock_euler2[2])
         # lock_euler2 = lock_euler2.at[1].set(-lock_euler2[1])
-        lock_euler2 = lock_euler2.at[0].set(-lock_euler2[0])
 
         hidden2a_transform = self.lock_hidden2a_to_gripper1.place_other(
-            5, param, gripper1_transform, -lock_euler1[2]
+            param, gripper1_transform, 5, -lock_euler1[2]
         )
         hidden1a_transform = self.lock_hidden1a_to_hidden2a.place_other(
-            5, param, hidden2a_transform, lock_euler1[1]
+            param, hidden2a_transform, 5, lock_euler1[1]
         )
 
         hidden2b_transform = self.lock_gripper2_to_hidden_link2b.place_other(
-            5, param, gripper2_transform, -lock_euler2[2]
+            param, gripper2_transform, 5, -lock_euler2[2]
         )
         hidden1b_transform = self.lock_hidden2b_to_hidden1b.place_other(
-            5, param, hidden2b_transform, lock_euler2[1]
+            param, hidden2b_transform, 5, lock_euler2[1]
         )
 
         full_pos = jnp.concatenate(

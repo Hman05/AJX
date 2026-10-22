@@ -45,6 +45,20 @@ class LockAtZeroSpeedMotorSE3(PreStepModifier):
             3:
         ] * rot_lock + updated_frame.rot * jnp.logical_not(rot_lock)
         new_frame = jnp.concatenate([new_frame_pos, new_frame_rot])
+
+        # The linear commands are world velocities rotated by frame a, while the
+        # linear degrees of the residuals other than AXIAL_WORLD_SPHERICAL are in
+        # frame a coordinates, so the commands are rotated twice by its inverse
+        if (
+            self.constraint.constraint_residual
+            != ConstraintResidual.AXIAL_WORLD_SPHERICAL.value
+        ):
+            frame_a_inv_rot = math.conjugate(new_frame[3:7])
+            linear_target = math.rotate_vector(
+                frame_a_inv_rot, math.rotate_vector(frame_a_inv_rot, target[:3])
+            )
+            target = target.at[:3].set(linear_target)
+
         state = state.replace(
             lock_targets=state.lock_targets.at[self.lock_idx].set(new_frame)
         )
@@ -390,17 +404,12 @@ class LockedDLO(DLO):
         self.extra_geometry = [("ground", Transform.identity())]
 
     def create_neutral_configuration(self, observation, param):
-        world_transform = Transform(
-            jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
-        )
         body_transforms = []
-        body_transforms.append(self.first_lock.place_other(param, world_transform, 0))
+        body_transforms.append(self.first_lock.place_other(param))
         for i in range(self.env_settings.n_segments):
-            new_transform = self.lock_joints[i].place_other(
-                0, param, body_transforms[-1], 0
-            )
+            new_transform = self.lock_joints[i].place_other(param, body_transforms[-1])
             body_transforms.append(new_transform)
-        body_transforms.append(self.last_lock.place_other(param, world_transform, 0))
+        body_transforms.append(self.last_lock.place_other(param))
         return Configuration.concatenate(
             [body_transform.to_configuration() for body_transform in body_transforms]
         )

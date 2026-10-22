@@ -74,7 +74,7 @@ class Pendulum(Environment):
         if self.has_quadratic_damping:
             self.pre_step_modifiers.append(self.quadratic_damping)
 
-        self.rotary_decoder = LinearEncoder("rotary_encoder", self.hinge)
+        self.rotary_decoder = DegreeEncoder("rotary_encoder", self.hinge, 5)
         self.sensors = (self.rotary_decoder,)
 
         self.sim = simulation.Simulation(
@@ -92,7 +92,7 @@ class Pendulum(Environment):
             PendulumSparseParamClass(
                 damping=self.damping_param,
                 offset_param=OffsetParameters(
-                    ("rotary_encoder"),
+                    ("rotary_encoder",),
                     (0.0,),
                     (1.0,),
                 ),
@@ -110,12 +110,8 @@ class Pendulum(Environment):
         )
 
     def observation_to_configuration(self, observation, param):
-        world_transform = Transform(
-            jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
-        )
-
         theta = observation[0]
-        pendulum_transform = self.hinge.place_other(param, world_transform, theta)
+        pendulum_transform = self.hinge.place_other(param, 5, theta)
 
         return Configuration.concatenate([pendulum_transform.to_configuration()])
 

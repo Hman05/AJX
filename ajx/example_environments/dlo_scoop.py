@@ -185,6 +185,9 @@ class LockAtZeroSpeedMotor(PreStepModifier):
     lock_degrees: List[int]
     u_idx: int
     lock_idx: int
+    # The sign of the command of each degree. With sign -1, a positive command
+    # drives the degree in its negative direction
+    signs: Optional[jax.Array] = None
 
     def update_params(self, state: DLOState, u: jax.Array, param: SimulationParameters):
         num_lock_deg = len(self.lock_degrees)
@@ -192,9 +195,12 @@ class LockAtZeroSpeedMotor(PreStepModifier):
         not_lock = jnp.logical_not(lock)
 
         current_offset = self.constraint.object_func(state, param)[self.lock_degrees]
+        commands = u[self.u_idx : self.u_idx + num_lock_deg]
+        if self.signs is not None:
+            commands = self.signs * commands
         target = (
             state.lock_targets[self.lock_idx : self.lock_idx + num_lock_deg] * lock
-            + u[self.u_idx : self.u_idx + num_lock_deg] * not_lock
+            + commands * not_lock
         )
         new_lock_target = (
             state.lock_targets[self.lock_idx : self.lock_idx + num_lock_deg] * lock
@@ -704,8 +710,16 @@ class DLOScoop(Environment):
 
         pos_yaw_degrees = jnp.array([0, 1, 2, 5])
         hinge_degree = jnp.array([5])
+        # A positive yaw command turns the gripper in the negative direction of the
+        # hinge angle of the one-body lock
+        pos_yaw_signs = jnp.array([1.0, 1.0, 1.0, -1.0])
         target_speed_motor1 = LockAtZeroSpeedMotor(
-            "motor1_pos_yaw", self.lock_world_to_hidden1a, pos_yaw_degrees, 0, 0
+            "motor1_pos_yaw",
+            self.lock_world_to_hidden1a,
+            pos_yaw_degrees,
+            0,
+            0,
+            pos_yaw_signs,
         )
         target_speed_motor2 = LockAtZeroSpeedMotor(
             "motor1_pitch", self.lock_hidden1a_to_hidden2a, hinge_degree, 4, 4
@@ -781,37 +795,23 @@ class DLOScoop(Environment):
     def create_neutral_configuration(self, observation, param):
         # TODO: Function name is misleading
         bl = self.env_settings.segment_halflength
-        world_transform = Transform(
-            jnp.array(
-                [
-                    0.0,
-                    0.0,
-                    0.0,
-                ]
-            ),
-            math.Rotations.identity,  # This should not be required...
-        )
 
         body_transforms = []
+        body_transforms.append(self.lock_world_to_hidden1a.place_other(param))
         body_transforms.append(
-            self.lock_world_to_hidden1a.place_other(param, world_transform, 0)
+            self.lock_hidden1a_to_hidden2a.place_other(param, body_transforms[-1])
         )
         body_transforms.append(
-            self.lock_hidden1a_to_hidden2a.place_other(0, param, body_transforms[-1], 0)
-        )
-        body_transforms.append(
-            self.lock_hidden2a_to_gripper1.place_other(0, param, body_transforms[-1], 0)
+            self.lock_hidden2a_to_gripper1.place_other(param, body_transforms[-1])
         )
         for i in range(self.env_settings.n_segments):
-            new_transform = self.lock_joints[i].place_other(
-                0, param, body_transforms[-1], 0
-            )
+            new_transform = self.lock_joints[i].place_other(param, body_transforms[-1])
             body_transforms.append(new_transform)
         gripper2_transform = self.lock_joints[-1].place_other(
-            0, param, body_transforms[-1], 0
+            param, body_transforms[-1]
         )
         cylinder_transform = self.lock_gripper2_to_cylinder.place_other(
-            0, param, gripper2_transform, 0
+            param, gripper2_transform
         )
         body_transforms.append(gripper2_transform)
         body_transforms.append(cylinder_transform)

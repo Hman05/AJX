@@ -15,6 +15,7 @@ from ajx.constraints.base import (
     ConstraintResidual,
     get_frame_transform,
     get_frame_transform_ext,
+    place_body_b,
 )
 
 
@@ -323,111 +324,41 @@ class TwoBodyConstraint(Constraint):
 
         return jac_hinge + jac_prismatic + jac_se3 + jac_twist_bend
 
-    # @partial(jit, static_argnums=0)
-    def get_free_degrees(
-        self,
-        state: State,
-        param: SimulationParameters,
-    ) -> jax.Array:
-        body_b_id = param.rigid_body_param.names.index(self.body_b)
-        body_a_id = param.rigid_body_param.names.index(self.body_a)
-        constraint_id = param.constraint_param.names.index(self.name)
-
-        body_b_pos = state.conf.pos[body_b_id]
-        body_b_rot = state.conf.rot[body_b_id]
-        body_a_pos = state.conf.pos[body_a_id]
-        body_a_rot = state.conf.rot[body_a_id]
-
-        frame_a_pos0 = param.constraint_param.frame_a.position[constraint_id]
-        frame_a_rot0 = param.constraint_param.frame_a.rotation[constraint_id]
-        frame_a_rot = math.quat_mul(body_a_rot, frame_a_rot0)
-        d_a = math.rotate_vector(body_a_rot, frame_a_pos0)
-
-        frame_b_pos0 = param.constraint_param.frame_b.position[constraint_id]
-        frame_b_rot0 = param.constraint_param.frame_b.rotation[constraint_id]
-        frame_b_rot = math.quat_mul(body_b_rot, frame_b_rot0)
-        d_b = math.rotate_vector(body_b_rot, frame_b_pos0)
-
-        # For prismatic
-        r_a = body_a_pos + d_a
-        r_b = body_b_pos + d_b
-        r_delta = r_a - r_b
-        u_a = math.rotation_matrix(frame_a_rot)[:, 0]
-        x = jnp.dot(u_a, r_delta)
-        free_prismatic = x * (self.constraint_residual == 1)
-
-        # For hinge
-        frame_a_rot_inv = math.conjugate(frame_a_rot)
-        delta_rotation = math.quat_mul(frame_a_rot_inv, frame_b_rot)
-        axis_angle = math.to_rotation_vector(delta_rotation)
-        axis = jnp.array([1.0, 0.0, 0.0])
-        theta = jnp.dot(axis_angle, axis)
-        free_hinge = theta * (self.constraint_residual == 0)
-        return free_hinge + free_prismatic
-
     def place_other(
         self,
-        free_degree: int,
         param: SimulationParameters,
         body_a_transform: Transform,
-        x: float,
+        degrees: Union[int, Tuple[int]] = (),
+        values: Union[float, jax.Array] = (),
     ) -> Transform:
         """
-        Returns the configuration of the next body within a kinematic tree containing this joint.
+        Returns the transform of body b that puts the given degrees of this
+        constraint at the given values, and all other degrees at zero.
 
         Parameters
         ----------
-        param: Dict
-            The system's parameters stored as a jax pytree with a dictionary at the top level.
+        param: SimulationParameters
+            The system's parameters.
         body_a_transform: Transform
-            The transform of the previous body/frame in the kinematic chain.
-        x: float
-            Value of the free degree displacement between the frames (Assumes prismatic or hinge).
+            The transform of body a.
+        degrees: int or Tuple[int]
+            The degrees (rows of the constraint residual) to set. These can be the
+            linear degrees 0, 1 and 2, and the hinge degree 5 of the axial residuals.
+        values: float or jax.Array
+            The value of each degree.
         Returns:
         -------
         Transform:
-            The transform of the next body.
+            The transform of body b.
         """
         i = param.constraint_param.names.index(self.name)
         cp = param.constraint_param
-        d0_a = cp.frame_a.position[i]
-        frame_a_rot0 = cp.frame_a.rotation[i]
-        d_a = math.rotate_vector(body_a_transform.rot, d0_a)
-        frame_a_position = body_a_transform.pos + d_a
-        frame_a_rot = math.quat_mul(body_a_transform.rot, frame_a_rot0)
-        u_a = math.rotation_matrix(frame_a_rot)[:, 0]
-        v_a = math.rotation_matrix(frame_a_rot)[:, 1]
-        w_a = math.rotation_matrix(frame_a_rot)[:, 2]
-
-        # Hinge
-        frame_b_rot0 = cp.frame_b.rotation[i]
-        frame_b_rot_as_seen_from_a = math.quat_from_axis_angle(
-            jnp.array([1.0, 0.0, 0.0]), x
+        return place_body_b(
+            self.constraint_residual,
+            cp.frame_a,
+            cp.frame_b,
+            i,
+            body_a_transform,
+            degrees,
+            values,
         )
-        frame_b_rot = math.quat_mul(frame_a_rot, frame_b_rot_as_seen_from_a)
-        hinge_body_b_rotation = math.quat_mul(frame_b_rot, math.conjugate(frame_b_rot0))
-        d0_b = cp.frame_b.position[i]
-        d_b = math.rotate_vector(hinge_body_b_rotation, d0_b)
-        hinge_body_b_position = frame_a_position - d_b
-
-        # Prismatic
-        offset = jnp.array([x, 0, 0])
-        d_b0 = math.rotate_vector(frame_a_rot, offset)
-
-        frame_b_pos = frame_a_position - d_b0
-        frame_b_rot = frame_a_rot
-        frame_b_rot0 = cp.frame_b.rotation[i]
-        d0_b = cp.frame_b.position[i]
-        frame_b_rot0_inv = math.conjugate(frame_b_rot0)
-        prismatic_body_b_rotation = math.quat_mul(frame_b_rot, frame_b_rot0_inv)
-        d_b = math.rotate_vector(prismatic_body_b_rotation, d0_b)
-        prismatic_body_b_position = frame_b_pos - d_b
-
-        body_b_rotation = hinge_body_b_rotation * (
-            free_degree == 5
-        ) + prismatic_body_b_rotation * (free_degree == 0)
-        body_b_position = hinge_body_b_position * (
-            free_degree == 5
-        ) + prismatic_body_b_position * (free_degree == 0)
-
-        return Transform(body_b_position, body_b_rotation)

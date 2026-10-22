@@ -120,12 +120,17 @@ class LockAtZeroSpeedMotor(PreStepModifier):
     u_idx: int
     lock_idx: int
     target_dof: int
+    # With sign -1, a positive command drives the degree in its negative direction
+    sign: float = 1.0
 
     def update_params(self, state: DLOState, u, param: SimulationParameters):
         lock = u[self.u_idx] == 0.0
         not_lock = jnp.logical_not(lock)
         current_offset = self.constraint.object_func(state, param)[self.target_dof]
-        target = state.lock_targets[self.lock_idx] * lock + u[self.u_idx] * not_lock
+        target = (
+            state.lock_targets[self.lock_idx] * lock
+            + self.sign * u[self.u_idx] * not_lock
+        )
         new_lock_target = (
             state.lock_targets[self.lock_idx] * lock + current_offset * not_lock
         )
@@ -302,8 +307,10 @@ class DLOAttached(Environment):
         )
 
         if self.env_settings.hinge_motor_attachment:
+            # A positive command turns the attachment in the negative direction of
+            # the hinge angle
             hinge_motor = LockAtZeroSpeedMotor(
-                "hinge_motor", self.attachment_constraint, 0, 0, 5
+                "hinge_motor", self.attachment_constraint, 0, 0, 5, sign=-1.0
             )
             pre_step_modifiers = (couple_constraints, hinge_motor)
         else:
@@ -372,18 +379,10 @@ class DLOAttached(Environment):
         ]
 
     def observation_to_configuration(self, observation, param):
-        world_transform = Transform(
-            jnp.array([0.0, 0.0, 0.0]), jnp.array([1.0, 0.0, 0.0, 0.0])
-        )
-
         body_transforms = []
-        body_transforms.append(
-            self.attachment_constraint.place_other(param, world_transform, 0)
-        )
+        body_transforms.append(self.attachment_constraint.place_other(param))
         for i in range(len(self.lock_joints)):
-            new_transform = self.lock_joints[i].place_other(
-                0, param, body_transforms[-1], 0
-            )
+            new_transform = self.lock_joints[i].place_other(param, body_transforms[-1])
             body_transforms.append(new_transform)
         return Configuration.concatenate(
             [body_transform.to_configuration() for body_transform in body_transforms]
