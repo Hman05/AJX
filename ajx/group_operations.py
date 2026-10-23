@@ -1,5 +1,6 @@
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jax import lax
 
 
@@ -15,6 +16,27 @@ def grouped_fori_loop(groups, body_fun, init_val):
         val = jax.lax.fori_loop(0, count, body_fun_aug, val)
         count_offset += count
     return val
+
+
+def gather_blocks(data, ptrs, shape):
+    """
+    Gather the row-major blocks of the given shape starting at the static offsets ptrs in data.
+    Returns an array of shape (len(ptrs), *shape).
+    """
+    size = shape[0] * shape[1]
+    indices = np.asarray(ptrs)[:, None] + np.arange(size)
+    return data[indices].reshape(len(ptrs), *shape)
+
+
+def gather_rows(vec, begins, size):
+    """Gather the segments vec[b : b + size] for each static b in begins, shape (len(begins), size)."""
+    return vec[np.asarray(begins)[:, None] + np.arange(size)]
+
+
+def scatter_add_rows(vec, begins, values):
+    """Add each row of values to vec at the static offsets begins."""
+    indices = np.asarray(begins)[:, None] + np.arange(values.shape[1])
+    return vec.at[indices].add(values)
 
 
 def sparse_blockrow_mul_vec(mat, vec, col_sizes, col_offsets):

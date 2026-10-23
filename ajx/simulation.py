@@ -23,6 +23,7 @@ from ajx.definitions import (
     ScalarBody,
     State,
 )
+from ajx.group_operations import gather_blocks, scatter_add_rows
 from ajx.param import SimulationParameters
 from ajx.pre_step_modifiers import PreStepModifier
 from ajx.projected_gauss_seidel import (
@@ -351,16 +352,13 @@ class Simulation:
         )  # To assign a default residual that is returned if the solver does not return the residual.
 
         if self.settings.solver == Solver.SPARSE_LINEAR:
-            S_sparse, rsi_dict = self._schur_reduction(G, M_inv, Sigma_data)
+            S_sparse = self._schur_reduction(G, M_inv, Sigma_data)
             M_inv_f = M_inv.mul_vector(f_ext)
 
             M_inv_a = gvel + self.h * M_inv_f
             rhs = b_data - G.mul_vector(M_inv_a)
-            rsi_list = tuple(rsi_dict.values())
 
-            lbda = ldlt_solve(
-                S_sparse, rsi_list, rhs, self.settings.ldlt_refinement_steps
-            )
+            lbda = ldlt_solve(S_sparse, rhs, self.settings.ldlt_refinement_steps)
             GTlbda = G.vector_mul(lbda)
 
             # To update velocity
@@ -711,63 +709,44 @@ class Simulation:
             self.constraint_list,
             lower,
         )
+
+        # S[i, j] is the sum of G[i, c] @ M_inv[c] @ G[j, c].T over the bodies c shared by
+        # the constraints i and j. The terms are grouped by shape, and each group is formed
+        # by one batched product, independent of the number of constraints.
+        M_inv_ptr = np.cumulative_sum(G.col_sizes**2, include_initial=True)
+        G_block_rows = np.repeat(np.arange(G.n_rows), np.diff(G.row_ptr))
+        blocks_per_body = {}
+        for row, body, ptr in zip(G_block_rows, G.col_indices, G.block_ptr):
+            blocks_per_body.setdefault(body, []).append((row, ptr))
+
+        terms = {}
+        for body, blocks in blocks_per_body.items():
+            for i, G_i_ptr in blocks:
+                for j, G_j_ptr in blocks:
+                    if (i, j) in rsi_dict:
+                        shape = (G.row_sizes[i], G.row_sizes[j], G.col_sizes[body])
+                        terms.setdefault(shape, []).append(
+                            (G_i_ptr, G_j_ptr, M_inv_ptr[body], rsi_dict[(i, j)])
+                        )
+
         S_data = jnp.zeros(schur_size)
+        for (rows_i, rows_j, cols), ptrs in terms.items():
+            G_i_ptr, G_j_ptr, M_ptr, S_ptr = np.array(ptrs).T
+            G_i = gather_blocks(G.data, G_i_ptr, (rows_i, cols))
+            G_j = gather_blocks(G.data, G_j_ptr, (rows_j, cols))
+            M_c = gather_blocks(M_inv.data, M_ptr, (cols, cols))
+            res = jnp.einsum("kab,kbc,kdc->kad", G_i, M_c, G_j)
+            S_data = scatter_add_rows(S_data, S_ptr, res.reshape(len(ptrs), -1))
 
-        # Want to form S = G @ M_inv @ G.T + Sigma
-        # Result is formed by "M_inv weighted block-dot products" of combinations of rows of G
-        # The question is how to take block-dot products of sparse rows...
+        # Sigma on the diagonal
+        sigma_indices = [
+            rsi_dict[(i, i)] + np.arange(size) * (size + 1)
+            for i, size in enumerate(block_sizes)
+        ]
+        sigma_indices = np.concatenate(sigma_indices + [np.zeros(0, dtype=int)])
+        S_data = S_data.at[sigma_indices].add(Sigma_data)
 
-        slice_begin1 = 0
-        sigma_slice_begin = 0
-        for i in range(len(G.row_ptr) - 1):
-            # First loop over rows
-            # Want to find the column indices (cols1) and the correct slice of data (data1)
-            r1_slice = (G.row_ptr[i], G.row_ptr[i + 1])
-            cols1 = G.col_indices[r1_slice[0] : r1_slice[1]]
-            slice_end1 = slice_begin1 + sum(
-                G.col_sizes[c] * G.row_sizes[i] for c in cols1
-            )
-            data1 = G.data[slice_begin1:slice_end1]
-            slice_begin2 = 0
-            sigma_slice_end = sigma_slice_begin + block_sizes[i]
-            for j in range(len(G.row_ptr) - 1):
-                # Second loop over rows
-                # Want to find the column indices (cols2) and the correct slice of data (data2)
-                r2_slice = (G.row_ptr[j], G.row_ptr[j + 1])
-                cols2 = G.col_indices[r2_slice[0] : r2_slice[1]]
-                slice_end2 = slice_begin2 + sum(
-                    G.col_sizes[c] * G.row_sizes[j] for c in cols2
-                )
-                if (i, j) in rsi_dict:
-                    data2 = G.data[slice_begin2:slice_end2]
-                    res, intersection_empty = _bdot_over_intersection(
-                        cols1,
-                        data1,
-                        cols2,
-                        data2,
-                        M_inv.data,
-                        G.row_sizes[i],
-                        G.row_sizes[j],
-                        G.col_sizes,
-                    )
-                    if i == j:
-                        res = res + jnp.diag(
-                            Sigma_data[sigma_slice_begin:sigma_slice_end]
-                        )
-                        pass
-                    if not intersection_empty:
-                        rsi_slice_begin = rsi_dict[(i, j)]
-                        rsi_slice_end = rsi_slice_begin + res.shape[0] * res.shape[1]
-                        S_data = S_data.at[rsi_slice_begin:rsi_slice_end].set(
-                            res.flatten()
-                        )
-                        # S_data[rsi_slice_begin:rsi_slice_end] = res.flatten()
-                slice_begin2 = slice_end2
-            sigma_slice_begin = sigma_slice_end
-            slice_begin1 = slice_end1
-        S = VBCMatrix.create(S_data, row_indices, col_ptr, block_sizes, block_sizes)
-
-        return S, rsi_dict
+        return VBCMatrix.create(S_data, row_indices, col_ptr, block_sizes, block_sizes)
 
     def _assemble_constraint_metadata(self):
         return {
@@ -775,58 +754,3 @@ class Simulation:
                 [c.constraint_residual for c in self.constraint_list]
             )
         }
-
-
-def _bdot_over_intersection(
-    a_indices,
-    a_values,
-    b_indices,
-    b_values,
-    c_values,
-    row_size1,
-    row_size2,
-    col_sizes,
-):
-    """
-    Compute A @ C @ B.T where
-    - A is of shape row_size1*N
-    - B is of shape row_size1*N
-    - C is of shape N*N
-    - A is stored in single-block variable block row (VBR) format:
-        -- a_indices: Th
-    """
-    res = jnp.zeros([row_size1, row_size2])
-    intersection_empty = True
-    m = len(a_indices)
-    n = len(b_indices)
-    slices3 = np.cumulative_sum(np.array(col_sizes) ** 2, include_initial=True)
-
-    slice_begin1 = 0
-    slice_begin2 = 0
-    i, j = 0, 0
-    while i < m and j < n:
-        slice_end1 = slice_begin1 + row_size1 * col_sizes[i]
-        slice_end2 = slice_begin2 + row_size2 * col_sizes[j]
-
-        if a_indices[i] == b_indices[j]:
-            reduce_size = col_sizes[a_indices[i]]
-            slice_begin3 = slices3[a_indices[i]]
-            slice_end3 = slices3[a_indices[i] + 1]
-            A = a_values[slice_begin1:slice_end1].reshape(row_size1, reduce_size)
-            B = b_values[slice_begin2:slice_end2].reshape(row_size2, reduce_size)
-            C = c_values[slice_begin3:slice_end3].reshape(reduce_size, reduce_size)
-            res_value = A @ C @ B.T
-            res += res_value
-            intersection_empty = False
-        ii = i
-        jj = j
-        if a_indices[i] <= b_indices[j]:
-            ii = i + 1
-            slice_begin1 = slice_end1
-        if a_indices[i] >= b_indices[j]:
-            jj = j + 1
-            slice_begin2 = slice_end2
-        i = ii
-        j = jj
-
-    return res, intersection_empty

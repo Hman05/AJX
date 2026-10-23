@@ -4,11 +4,14 @@ from ajx.block_sparse.base import BlockMatrixBase
 
 
 from typing import List, Dict, Tuple
+from functools import lru_cache
 from itertools import combinations_with_replacement, product, accumulate
 from jax.tree_util import register_pytree_node_class
 from flax import struct
 import numpy as np
 import numpy.typing as npt
+
+from ajx.group_operations import gather_blocks, gather_rows, scatter_add_rows
 
 
 @struct.dataclass
@@ -265,55 +268,43 @@ class VBRMatrix(BlockMatrixBase):
 
         return full_mat
 
+    @property
+    def block_ptr(self):
+        """Where each block starts in data, in the order of col_indices"""
+        block_rows = np.repeat(np.arange(self.n_rows), np.diff(self.row_ptr))
+        sizes = self.row_sizes[block_rows] * self.col_sizes[self.col_indices]
+        return np.cumulative_sum(sizes, include_initial=True)[:-1]
+
+    @property
+    def shape_groups(self):
+        """
+        The blocks grouped by shape, as a tuple of (shape, data_ptr, row_begin, col_begin),
+        where the arrays hold where each block starts in data, in a column vector and in a row vector.
+        """
+        return _shape_groups(
+            self.byte_col_indices,
+            self.byte_row_ptr,
+            self.byte_row_sizes,
+            self.byte_col_sizes,
+        )
+
     def mul_vector(self, vec):
+        # One batched product per block shape, independent of the number of blocks
         res = jnp.zeros(sum(self.row_sizes))
-        slice_begin = 0
-        for k in range(len(self.row_ptr) - 1):
-            row_id = k
-            for i in range(self.row_ptr[k], self.row_ptr[k + 1]):
-                col_id = self.col_indices[i]
-                shape = (self.row_sizes[row_id], self.col_sizes[col_id])
-                slice_end = slice_begin + shape[0] * shape[1]
-                mat = self.data[slice_begin:slice_end].reshape(shape)
-
-                col_slice_begin = self.col_begin_indices[col_id]
-                col_slice_end = self.col_begin_indices[col_id + 1]
-                row_slice_begin = self.row_begin_indices[row_id]
-                row_slice_end = self.row_begin_indices[row_id + 1]
-
-                vec_data = vec[col_slice_begin:col_slice_end]
-
-                local_result = mat @ vec_data
-                res = res.at[row_slice_begin:row_slice_end].set(
-                    res[row_slice_begin:row_slice_end] + local_result
-                )
-                slice_begin = slice_end
+        for shape, data_ptr, row_begin, col_begin in self.shape_groups:
+            blocks = gather_blocks(self.data, data_ptr, shape)
+            vec_data = gather_rows(vec, col_begin, shape[1])
+            local_result = jnp.einsum("kij,kj->ki", blocks, vec_data)
+            res = scatter_add_rows(res, row_begin, local_result)
         return res
 
     def vector_mul(self, vec):
         res = jnp.zeros(sum(self.col_sizes))
-        slice_begin = 0
-        for k in range(len(self.row_ptr) - 1):
-            row_id = k
-            for i in range(self.row_ptr[k], self.row_ptr[k + 1]):
-                col_id = self.col_indices[i]
-                shape = (self.row_sizes[row_id], self.col_sizes[col_id])
-                slice_end = slice_begin + shape[0] * shape[1]
-                mat = self.data[slice_begin:slice_end].reshape(shape)
-
-                col_slice_begin = self.col_begin_indices[col_id]
-                col_slice_end = self.col_begin_indices[col_id + 1]
-                row_slice_begin = self.row_begin_indices[row_id]
-                row_slice_end = self.row_begin_indices[row_id + 1]
-
-                vec_data = vec[row_slice_begin:row_slice_end]
-
-                local_result = vec_data @ mat
-                res = res.at[col_slice_begin:col_slice_end].set(
-                    res[col_slice_begin:col_slice_end] + local_result
-                )
-                slice_begin = slice_end
-
+        for shape, data_ptr, row_begin, col_begin in self.shape_groups:
+            blocks = gather_blocks(self.data, data_ptr, shape)
+            vec_data = gather_rows(vec, row_begin, shape[0])
+            local_result = jnp.einsum("ki,kij->kj", vec_data, blocks)
+            res = scatter_add_rows(res, col_begin, local_result)
         return res
 
     def grouped_vector_mul(self, vec):
@@ -395,6 +386,34 @@ class VBRMatrix(BlockMatrixBase):
             )
 
         plt.show()
+
+
+@lru_cache(maxsize=None)
+def _shape_groups(byte_col_indices, byte_row_ptr, byte_row_sizes, byte_col_sizes):
+    structure = VBRMatrix.create(
+        None,
+        np.frombuffer(byte_col_indices, dtype=np.int64),
+        np.frombuffer(byte_row_ptr, dtype=np.int64),
+        np.frombuffer(byte_row_sizes, dtype=np.int64),
+        np.frombuffer(byte_col_sizes, dtype=np.int64),
+    )
+    block_rows = np.repeat(np.arange(structure.n_rows), np.diff(structure.row_ptr))
+    block_cols = structure.col_indices
+    shapes = np.stack(
+        [structure.row_sizes[block_rows], structure.col_sizes[block_cols]], axis=1
+    )
+    groups = []
+    for shape in np.unique(shapes, axis=0):
+        in_group = np.all(shapes == shape, axis=1)
+        groups.append(
+            (
+                tuple(int(s) for s in shape),
+                structure.block_ptr[in_group],
+                structure.row_begin_indices[block_rows[in_group]],
+                structure.col_begin_indices[block_cols[in_group]],
+            )
+        )
+    return tuple(groups)
 
 
 if __name__ == "__main__":
