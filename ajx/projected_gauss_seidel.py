@@ -243,9 +243,8 @@ def precompute_row_blocks_data(G, M_inv, Sigma, group_meta_data):
             Gi_M_inv = sparse_blockrow_mul_blockdiag(
                 Gi, M_inv.data, gmd["col_sizes"], gmd["col_sq_offsets"][j]
             )
-            Sii = jax.vmap(lambda A, B: A @ B.T)(
-                jnp.stack(Gi_M_inv), jnp.stack(Gi)
-            ).sum(axis=0)
+            # The blocks of a row may have different widths (rigid bodies and shafts)
+            Sii = sum(A @ B.T for A, B in zip(Gi_M_inv, Gi))
             row_start = gmd["group_row_start"] + j * gmd["row_size"]
             sigma_i = jax.lax.dynamic_slice(Sigma, (row_start,), (gmd["row_size"],))
             return Gi, Sii + jnp.diag(sigma_i), Gi_M_inv
